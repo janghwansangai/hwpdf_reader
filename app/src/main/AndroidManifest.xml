@@ -47,8 +47,91 @@
                 <data android:mimeType="application/hwp+zip" />
                 <data android:mimeType="application/haansofthwpx" />
                 <data android:mimeType="application/vnd.hancom.hwpx" />
+                <data android:mimeType="application/hwpx" />
+                <data android:mimeType="application/x-hwpml" />
                 <!-- 한글 파일은 형식을 모르는 앱이 octet-stream 으로 보내는 경우가 많다 -->
                 <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- 파일 앱마다 HWPX 에 붙이는 형식(MIME)이 제각각이라(zip, 빈 값, 임의 이름 등) 확장자로도 연결한다 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathSuffix=".hwpx" />
+                <data android:pathPattern=".*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\..*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.hwpx" />
+                <data android:pathSuffix=".HWPX" />
+                <data android:pathPattern=".*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\..*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.HWPX" />
+                <data android:pathSuffix=".hwp" />
+                <data android:pathPattern=".*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\..*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.hwp" />
+                <data android:pathSuffix=".HWP" />
+                <data android:pathPattern=".*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\..*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.HWP" />
+                <data android:pathSuffix=".pdf" />
+                <data android:pathPattern=".*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\..*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.pdf" />
+                <data android:pathSuffix=".PDF" />
+                <data android:pathPattern=".*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\..*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.PDF" />
+            </intent-filter>
+
+            <!-- 형식(MIME) 없이 전달되는 경우 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:pathSuffix=".hwpx" />
+                <data android:pathPattern=".*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\..*\\.hwpx" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.hwpx" />
+                <data android:pathSuffix=".HWPX" />
+                <data android:pathPattern=".*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\..*\\.HWPX" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.HWPX" />
+                <data android:pathSuffix=".hwp" />
+                <data android:pathPattern=".*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\..*\\.hwp" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.hwp" />
+                <data android:pathSuffix=".HWP" />
+                <data android:pathPattern=".*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\..*\\.HWP" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.HWP" />
+                <data android:pathSuffix=".pdf" />
+                <data android:pathPattern=".*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\..*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.pdf" />
+                <data android:pathSuffix=".PDF" />
+                <data android:pathPattern=".*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\..*\\.PDF" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.PDF" />
             </intent-filter>
 
             <!-- 다른 앱에서 "공유" -->
@@ -64,6 +147,9 @@
                 <data android:mimeType="application/hwp+zip" />
                 <data android:mimeType="application/haansofthwpx" />
                 <data android:mimeType="application/vnd.hancom.hwpx" />
+                <data android:mimeType="application/hwpx" />
+                <data android:mimeType="application/x-hwpml" />
+                <data android:mimeType="application/zip" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
