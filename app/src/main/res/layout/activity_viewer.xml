@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationContentDescription="@string/close"
+        app:navigationIcon="@drawable/ic_close"
+        app:titleTextAppearance="?attr/textAppearanceTitleMedium" />
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/readProgress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="1000"
+        app:trackThickness="3dp" />
+
+    <LinearLayout
+        android:id="@+id/searchBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="4dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="@string/search_hint"
+            android:imeOptions="actionSearch"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/searchCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="8dp"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <ImageButton
+            android:id="@+id/searchPrev"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/search_prev"
+            android:src="@drawable/ic_arrow_up" />
+
+        <ImageButton
+            android:id="@+id/searchNext"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/search_next"
+            android:src="@drawable/ic_arrow_down" />
+
+        <ImageButton
+            android:id="@+id/searchClose"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/close"
+            android:src="@drawable/ic_close" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/notice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/notice_background"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:textColor="@color/notice_text"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <com.fastreader.app.viewer.ZoomRecyclerView
+            android:id="@+id/pdfList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/pdf_background"
+            android:clipToPadding="false"
+            android:visibility="gone" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/textList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingTop="8dp"
+            android:paddingBottom="24dp"
+            android:scrollbars="none"
+            android:visibility="gone"
+            app:fastScrollEnabled="true"
+            app:fastScrollHorizontalThumbDrawable="@drawable/fastscroll_thumb"
+            app:fastScrollHorizontalTrackDrawable="@drawable/fastscroll_track"
+            app:fastScrollVerticalThumbDrawable="@drawable/fastscroll_thumb"
+            app:fastScrollVerticalTrackDrawable="@drawable/fastscroll_track" />
+
+        <LinearLayout
+            android:id="@+id/loading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:indeterminate="true" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/loading" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/errorView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="32dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/errorText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/errorOpenOther"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/open_other" />
+        </LinearLayout>
+
+    </FrameLayout>
+    <!-- 하단 도구 막대: 엄지로 바로 누를 수 있는 주요 기능 -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurfaceContainer"
+        android:orientation="horizontal"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="2dp"
+        android:visibility="gone">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFirst"
+            style="@style/Widget.FastReader.BottomAction"
+            app:icon="@drawable/ic_search" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSecond"
+            style="@style/Widget.FastReader.BottomAction"
+            app:icon="@drawable/ic_text_size" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPage"
+            style="@style/Widget.FastReader.BottomAction"
+            app:icon="@drawable/ic_pages" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnShare"
+            style="@style/Widget.FastReader.BottomAction"
+            android:text="@string/share_short"
+            app:icon="@drawable/ic_share" />
+    </LinearLayout>
+</LinearLayout>

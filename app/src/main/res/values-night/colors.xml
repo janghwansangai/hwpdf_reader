@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pdf_background">#FF1B1C1E</color>
+    <color name="table_row_background">#22FFFFFF</color>
+    <color name="search_highlight">#80B38F00</color>
+    <color name="notice_background">#FF3D3200</color>
+    <color name="notice_text">#FFFFE69C</color>
+</resources>
