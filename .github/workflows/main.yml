@@ -1,0 +1,36 @@
+name: Build Fast Document Reader APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Set up Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 3. Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 4. Build Debug APK with Gradle
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: 5. Upload APK Artifact (스마트폰 다운로드용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: FastDocReader-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
