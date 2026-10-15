@@ -522,7 +522,7 @@ class HwpRichParserTest {
         assertEquals(ShapeKind.RECT, r.kind)
         assertEquals(20, r.cornerRadius)
         assertEquals(listOf(0, 0, 4000, 0, 4000, 2000, 0, 2000), r.points)
-        assertEquals(LineType.DOT, r.line.type) // HWP 선 종류 2 = 점선
+        assertEquals(LineType.DASH, r.line.type) // HWP 선 종류 2 = 파선 (한글 미리보기 그림 기준)
         assertEquals(0x112233, r.line.color)
         assertEquals(0xFFFFFF, r.fill!!.fillColor)
         assertEquals("상자 글", r.paragraphs.single().plainText)

@@ -483,14 +483,15 @@ internal class HwpControlReader(private val t: HwpRecordTree, private val sec: H
         private val THICKNESS_MM = floatArrayOf(0.1f, 0.12f, 0.15f, 0.2f, 0.25f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f)
 
         /**
-         * HWP 선 종류 값 → [LineType].
-         * 2 = 점선, 3 = 파선 (hwplib 의 이름은 둘이 바뀌어 있다: hwp2hwpx ValueConvertor.lineType2 주석, HWPX LineType2 순서와 같음)
+         * HWP 선 종류 값 → [LineType] (화면에 그려지는 모양 기준).
+         * 2 = 파선, 3 = 점선. 한글이 저장한 미리보기 그림(ref-hwp2hwpx test/table_line, test/rectangle)에서 확인.
+         * HWPX 는 같은 값을 "DOT"/"DASH" 로 이름을 바꿔 적으므로(hwp2hwpx ValueConvertor 주석의 "hwpx 포맷 오류") HWPX 쪽에서 맞춘다.
          */
         fun lineType(v: Int): LineType = when (v) {
             0 -> LineType.NONE
             1 -> LineType.SOLID
-            2 -> LineType.DOT
-            3 -> LineType.DASH
+            2 -> LineType.DASH
+            3 -> LineType.DOT
             4 -> LineType.DASH_DOT
             5 -> LineType.DASH_DOT_DOT
             6 -> LineType.LONG_DASH
