@@ -719,6 +719,56 @@ class HwpxRichParserTest {
         assertEquals(5, doc.sections[0].startPageNumber)
     }
 
+    @Test
+    fun pageControlsOnlyOnFirstPage() {
+        fun para(ctrl: String, vert: Int, flags: Int = 0, pageBreak: Boolean = false) =
+            """<hp:p pageBreak="${if (pageBreak) 1 else 0}"><hp:run charPrIDRef="0"><hp:t>x</hp:t>$ctrl<hp:t>y</hp:t></hp:run>""" +
+                """<hp:linesegarray><hp:lineseg textpos="0" vertpos="$vert" vertsize="1000" flags="$flags"/></hp:linesegarray></hp:p>"""
+        // 둘째 문단(같은 쪽)의 감추기와 새 번호는 구역 첫 쪽 값이 된다
+        val s1 = section(
+            para("", 0) + para("""<hp:ctrl><hp:pageHiding hideHeader="1" hideFooter="0" hidePageNum="1"/><hp:newNum num="3" numType="PAGE"/></hp:ctrl>""", 1600) +
+                para("""<hp:ctrl><hp:pageNum pos="NONE" formatType="DIGIT" sideChar=""/></hp:ctrl>""", 3200) +
+                para("""<hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar="-"/></hp:ctrl>""", 4800),
+        )
+        val a = parse(zip("Contents/section0.xml" to s1)).sections[0]
+        assertTrue(a.hideFirstHeader && a.hideFirstPageNumber && !a.hideFirstFooter)
+        assertEquals(3, a.startPageNumber)
+        // 쪽 번호는 처음으로 보이는 설정
+        assertEquals(com.fastreader.app.core.doc.PageNumberPos.BOTTOM_CENTER, a.pageNumbering!!.position)
+        assertEquals("-", a.pageNumbering!!.dash)
+        assertEquals(3, a.pageNumbering!!.fromParagraph)
+        // 둘째 쪽(세로 위치가 줄어듦 / 쪽 나누기)에 있으면 반영하지 않는다
+        val s2 = section(para("", 70000) + para("""<hp:ctrl><hp:pageHiding hideHeader="1"/><hp:newNum num="9" numType="PAGE"/></hp:ctrl>""", 0))
+        val b = parse(zip("Contents/section0.xml" to s2)).sections[0]
+        assertFalse(b.hideFirstHeader)
+        assertEquals(0, b.startPageNumber)
+        val s3 = section(para("", 0) + para("""<hp:ctrl><hp:pageHiding hideHeader="1"/></hp:ctrl>""", 1600, pageBreak = true))
+        assertFalse(parse(zip("Contents/section0.xml" to s3)).sections[0].hideFirstHeader)
+        // 표 안의 감추기는 구역 값이 아니다
+        val s4 = section(
+            """<hp:p><hp:run charPrIDRef="0"><hp:tbl rowCnt="1" colCnt="1"><hp:sz width="1000" height="1000"/><hp:tr><hp:tc><hp:subList><hp:p><hp:run charPrIDRef="0">""" +
+                """<hp:ctrl><hp:pageHiding hideHeader="1"/></hp:ctrl></hp:run></hp:p></hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/></hp:tc></hp:tr></hp:tbl></hp:run></hp:p>""",
+        )
+        assertFalse(parse(zip("Contents/section0.xml" to s4)).sections[0].hideFirstHeader)
+    }
+
+    @Test
+    fun limitsAndFailingImageSink() {
+        // 문단 수 한도를 넘으면 앞부분만 (알림과 함께)
+        val many = StringBuilder()
+        repeat(HwpxParseContext.MAX_PARAGRAPHS + 10) { many.append("<hp:p/>") }
+        val doc = parse(zip("Contents/section0.xml" to section(many.toString())))
+        assertNotNull(doc.notice)
+        assertTrue(doc.sections[0].paragraphs.size <= HwpxParseContext.MAX_PARAGRAPHS)
+        // 그림 저장이 실패해도 문서는 연다 (그림만 빠진다)
+        val sec = section("""<hp:p><hp:run charPrIDRef="0"><hp:t>글</hp:t></hp:run></hp:p>""")
+        val d2 = HwpxRichParser.parse(
+            zip("BinData/image1.png" to byteArrayOf(1, 2, 3), "Contents/section0.xml" to sec).inputStream(),
+        ) { _, _ -> throw java.io.IOException("disk full") }
+        assertEquals("글", d2.sections[0].paragraphs[0].plainText)
+        assertTrue(d2.images.isEmpty())
+    }
+
     // ------------------------------------------------------------ 패키지 세부
 
     @Test

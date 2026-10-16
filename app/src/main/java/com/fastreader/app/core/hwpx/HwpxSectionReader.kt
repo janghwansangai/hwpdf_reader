@@ -21,6 +21,7 @@ import com.fastreader.app.core.doc.ObjAlign
 import com.fastreader.app.core.doc.ObjectLayout
 import com.fastreader.app.core.doc.PageApply
 import com.fastreader.app.core.doc.PageDef
+import com.fastreader.app.core.doc.PageNumberPos
 import com.fastreader.app.core.doc.PageNumbering
 import com.fastreader.app.core.doc.Paragraph
 import com.fastreader.app.core.doc.Picture
@@ -81,6 +82,8 @@ internal class ParaBuilder(
     private val paraShapeId: Int,
     private val styleId: Int,
     private val breakType: BreakType,
+    /** 구역의 최상위 문단인가 (표 셀/글상자/머리말 안이 아닌) */
+    val top: Boolean = false,
 ) {
     var pos = 0
         private set
@@ -213,6 +216,45 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
     private var hideFirstPageNumber = false
     private var secPrSeen = false
 
+    /** 구역 첫 쪽 추적 (최상위 문단의 줄 배치로) */
+    private var firstPageEnded = false
+    private var sawTopLine = false
+    private var lastTopVertPos = Int.MIN_VALUE
+
+    /** 지금 최상위 문단의 새 번호/감추기 컨트롤 (문단 끝에서 첫 쪽인지 보고 반영) */
+    private class PageCtrl(
+        val pos: Int,
+        val newNum: Int = 0,
+        val hideHeader: Boolean = false,
+        val hideFooter: Boolean = false,
+        val hidePageNum: Boolean = false,
+    )
+
+    private val pendingPageCtrls = ArrayList<PageCtrl>()
+
+    /** 최상위 문단이 끝났을 때: 이 문단에서 쪽이 바뀌는 위치를 구해 첫 쪽의 컨트롤만 구역 값으로 옮긴다 */
+    private fun finishTopParagraph(p: Paragraph) {
+        var breakPos = Int.MAX_VALUE
+        if (p.breakType == BreakType.PAGE && topIndex > 0) breakPos = 0
+        for (ls in p.lines) {
+            val newPage = sawTopLine && (ls.isFirstInPage || ls.vertPos < lastTopVertPos)
+            if (newPage && breakPos == Int.MAX_VALUE) breakPos = ls.textStart
+            sawTopLine = true
+            lastTopVertPos = ls.vertPos
+        }
+        if (!firstPageEnded) {
+            for (c in pendingPageCtrls) {
+                if (c.pos >= breakPos) continue
+                if (c.newNum > 0 && newNumPage == 0) newNumPage = c.newNum
+                if (c.hideHeader) hideFirstHeader = true
+                if (c.hideFooter) hideFirstFooter = true
+                if (c.hidePageNum) hideFirstPageNumber = true
+            }
+        }
+        pendingPageCtrls.clear()
+        if (breakPos != Int.MAX_VALUE) firstPageEnded = true
+    }
+
     /** 루트가 hs:sec 이었는가 */
     var isSection = false
         private set
@@ -281,7 +323,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 a.bool("columnBreak") -> BreakType.COLUMN
                 else -> BreakType.NONE
             }
-            pb = ParaBuilder(ctx, a.int("paraPrIDRef"), a.int("styleIDRef"), brk)
+            pb = ParaBuilder(ctx, a.int("paraPrIDRef"), a.int("styleIDRef"), brk, top = out === paragraphs)
         }
 
         override fun child(name: String, a: XAttrs): XNode? = when (name) {
@@ -291,7 +333,9 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
 
         override fun end() {
-            out.add(pb.build())
+            val p = pb.build()
+            if (pb.top) finishTopParagraph(p)
+            out.add(p)
         }
     }
 
@@ -461,21 +505,29 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                     return NoteNode { paras -> pb.add(Inline.Note(start, pb.styleShape(charPr), endnote, number, paras)) }
                 }
                 "autoNum" -> return AutoNumNode(a) { kind, type, num -> pb.add(Inline.AutoNumber(start, pb.styleShape(charPr), kind, type, num)) }
-                "newNum" -> if (a.str("numType").trim().uppercase() == "PAGE" && topIndex == 0 && newNumPage == 0) {
-                    newNumPage = a.int("num").coerceIn(0, 1_000_000)
+                // 새 번호/감추기: 모델에는 구역 단위 값뿐이므로 구역 첫 쪽에 있을 때만 반영한다 (HWP 파서와 같음).
+                // 줄 배치(linesegarray)는 문단 끝에 오므로 문단이 끝날 때 판단한다
+                "newNum" -> if (pb.top && a.str("numType").trim().uppercase() == "PAGE") {
+                    val num = a.int("num").coerceIn(0, 1_000_000)
+                    if (num > 0) pendingPageCtrls.add(PageCtrl(start, newNum = num))
                 }
-                "pageNum" -> if (pageNumbering == null) {
-                    pageNumbering = PageNumbering(
-                        position = HwpxValues.pageNumberPos(a["pos"]),
-                        numberType = HwpxValues.numberType(a["formatType"]),
-                        dash = a.str("sideChar").take(4),
-                        fromParagraph = topIndex,
+                "pageNum" -> {
+                    // 구역당 하나: 처음으로 "보이는" 설정을 쓴다 (표지에 '없음' 이 먼저 와도 본문 번호가 살도록)
+                    val cur = pageNumbering
+                    val pos = HwpxValues.pageNumberPos(a["pos"])
+                    if (cur == null || (cur.position == PageNumberPos.NONE && pos != PageNumberPos.NONE)) {
+                        pageNumbering = PageNumbering(
+                            position = pos,
+                            numberType = HwpxValues.numberType(a["formatType"]),
+                            dash = a.str("sideChar").filter { it >= ' ' }.take(1),
+                            fromParagraph = topIndex,
+                        )
+                    }
+                }
+                "pageHiding" -> if (pb.top) {
+                    pendingPageCtrls.add(
+                        PageCtrl(start, hideHeader = a.bool("hideHeader"), hideFooter = a.bool("hideFooter"), hidePageNum = a.bool("hidePageNum")),
                     )
-                }
-                "pageHiding" -> if (topIndex == 0) {
-                    if (a.bool("hideHeader")) hideFirstHeader = true
-                    if (a.bool("hideFooter")) hideFirstFooter = true
-                    if (a.bool("hidePageNum")) hideFirstPageNumber = true
                 }
                 "fieldBegin" -> return FieldBeginNode(a) { id, kind, url -> pb.add(Inline.FieldStart(start, id, kind, url)) }
                 "fieldEnd" -> pb.add(Inline.FieldEnd(start, a.int("beginIDRef")))
