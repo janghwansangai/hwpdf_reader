@@ -81,10 +81,13 @@ internal object HwpxValues {
     fun border(a: XAttrs, defType: LineType = LineType.NONE): Border =
         Border(lineType(a["type"], defType), widthMm(a["width"]), color(a["color"]) ?: 0)
 
-    /** 그리기 개체 선(hp:lineShape). width 는 HWPUNIT */
+    /** 그리기 개체 선(hp:lineShape). width 는 HWPUNIT. 굵기 0 이하는 HWP 파서와 같이 선 없음 */
     fun lineShape(a: XAttrs): Border {
         val w = a.int("width", 0).coerceIn(0, 100_000)
-        return Border(lineType(a["style"], LineType.SOLID), w * 25.4f / 7200f, color(a["color"]) ?: 0)
+        val c = color(a["color"]) ?: 0
+        val t = lineType(a["style"], LineType.SOLID)
+        if (t == LineType.NONE || w <= 0) return Border(LineType.NONE, 0f, c)
+        return Border(t, w * 25.4f / 7200f, c)
     }
 
     fun align(s: String?): Align = when (s?.trim()?.uppercase()) {

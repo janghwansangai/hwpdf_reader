@@ -33,9 +33,12 @@ internal class HwpxHeader(
 /**
  * header.xml 읽기.
  *
- * 단위 규칙 (샘플과 hwp2hwpx ForParaProperties 로 확인):
+ * 단위 규칙 (샘플의 줄 배치 값과 hwp2hwpx ForParaProperties 로 확인):
  * - paraPr 의 margin(intent/left/right/prev/next)과 lineSpacing(PERCENT 가 아닐 때)은
  *   `hp:switch` 의 `hp:case`(HwpUnitChar) 안 값이 실제 HWPUNIT, `hp:default` 와 switch 없는 옛 형식 값은 2배.
+ *   (문단 사이 vertpos 간격 = 앞 문단 next + 뒤 문단 prev, 첫 줄 horzpos = left 로 확인)
+ * - hp:case 안에서 unit="CHAR" 인 값은 글자 단위: 샘플에서 80 → 600 HWPUNIT(바탕글 15pt)이었으므로
+ *   값 × 바탕글 크기 / 200 으로 근사한다. (hp:default 쪽은 2배 값의 최하위 비트를 1로 둔 값이다)
  * - charPr height 는 1/100 pt, 색은 "#RRGGBB".
  */
 internal class HwpxHeaderReader {
@@ -43,10 +46,13 @@ internal class HwpxHeaderReader {
     private val rawCharPrs = ArrayList<RawCharPr>()
     private val paraShapes = HashMap<Int, ParaShape>()
     private val borderFills = HashMap<Int, BorderFill>()
-    private val numberings = HashMap<Int, Numbering>()
+    private val rawNumberings = HashMap<Int, RawNumbering>()
     private val bullets = HashMap<Int, Bullet>()
     private val styles = HashMap<Int, Style>()
     private var startPage = 1
+
+    /** 글자 단위(CHAR) 여백이 있는 문단 모양: ID → 5개 값(intent left right prev next, 글자 단위가 아니면 null) */
+    private val charUnitMargins = HashMap<Int, Array<Int?>>()
 
     val root: XNode = object : XNode() {
         override fun child(name: String, a: XAttrs): XNode? = if (name == "head") HeadNode() else throw StopParsingException()
@@ -55,6 +61,22 @@ internal class HwpxHeaderReader {
     fun build(): HwpxHeader {
         val charShapes = HashMap<Int, CharShape>(rawCharPrs.size * 2)
         for (r in rawCharPrs) charShapes[r.id] = r.toCharShape(fontFaces)
+
+        // 글자 단위 여백: 바탕글(스타일 0)의 글자 크기 기준
+        if (charUnitMargins.isNotEmpty()) {
+            val base = styles[0]?.let { charShapes[it.charShapeId]?.baseSize } ?: 1000
+            for ((id, raw) in charUnitMargins) {
+                val ps = paraShapes[id] ?: continue
+                fun v(i: Int, cur: Int) = raw[i]?.let { XAttrs.clampLen((it.toLong() * base / 200).toInt()) } ?: cur
+                paraShapes[id] = ps.copy(
+                    indent = v(0, ps.indent), marginLeft = v(1, ps.marginLeft), marginRight = v(2, ps.marginRight),
+                    spacingBefore = v(3, ps.spacingBefore), spacingAfter = v(4, ps.spacingAfter),
+                )
+            }
+        }
+
+        val numberings = HashMap<Int, Numbering>(rawNumberings.size * 2)
+        for ((id, n) in rawNumberings) numberings[id] = n.build(charShapes)
         return HwpxHeader(charShapes, paraShapes, borderFills, numberings, bullets, styles, startPage)
     }
 
@@ -255,6 +277,7 @@ internal class HwpxHeaderReader {
         private var keepWithNext = false
         private var pageBreakBefore = false
         private val margin = IntArray(5) // intent left right prev next
+        private val charUnit = arrayOfNulls<Int>(5)
         private var marginPrio = 0
         private var lsType = LineSpacingType.PERCENT
         private var lsValue = 160
@@ -286,7 +309,8 @@ internal class HwpxHeaderReader {
                     if (prio >= marginPrio) {
                         marginPrio = prio
                         margin.fill(0)
-                        return MarginNode(if (a.inCase) 1 else 2)
+                        charUnit.fill(null)
+                        return MarginNode(a.inCase)
                     }
                 }
                 "lineSpacing" -> {
@@ -315,7 +339,7 @@ internal class HwpxHeaderReader {
             return null
         }
 
-        private inner class MarginNode(private val div: Int) : XNode() {
+        private inner class MarginNode(private val inCase: Boolean) : XNode() {
             override fun child(name: String, a: XAttrs): XNode? {
                 val i = when (name) {
                     "intent", "indent" -> 0
@@ -325,14 +349,24 @@ internal class HwpxHeaderReader {
                     "next" -> 4
                     else -> -1
                 }
-                // unit="CHAR" 인 값도 숫자는 HWPUNIT 로 저장된다(2배 값의 최하위 비트가 단위 표시)
-                if (i >= 0) margin[i] = XAttrs.clampLen(a.int("value") / div)
+                if (i < 0) return null
+                val v = a.len("value")
+                if (!inCase) {
+                    margin[i] = v / 2
+                } else if (a["unit"]?.trim()?.uppercase() == "CHAR") {
+                    // 바탕글 크기를 알아야 하므로 build() 에서 바꾼다. 그때까지는 10pt 기준
+                    charUnit[i] = v
+                    margin[i] = XAttrs.clampLen((v.toLong() * 1000 / 200).toInt())
+                } else {
+                    margin[i] = v
+                }
                 return null
             }
         }
 
         override fun end() {
             checkCount(paraShapes)
+            if (charUnit.any { it != null }) charUnitMargins[id] = charUnit.copyOf() else charUnitMargins.remove(id)
             paraShapes[id] = ParaShape(
                 align = align,
                 marginLeft = margin[1],
@@ -404,10 +438,37 @@ internal class HwpxHeaderReader {
         val start = a.int("start", 1)
         val align = HwpxValues.align(a["align"]).let { if (it == Align.JUSTIFY) Align.LEFT else it }
         val numberType = HwpxValues.numberType(a["numFormat"])
-        val charShapeId = a.int("charPrIDRef", -1).let { if (it == -1 || it == 0xFFFF) -1 else it }
+        val charShapeId = a.int("charPrIDRef", -1).let { if (it < 0 || it == 0xFFFF) -1 else it }
         val widthAdjust = a.len("widthAdjust")
         val textOffset = a.len("textOffset")
+
+        /** 본문과의 거리가 글자 크기에 대한 % 인가 (HWP 와 같이 HWPUNIT 으로 바꿔 넣는다) */
+        val textOffsetPercent = a["textOffsetType"]?.trim()?.uppercase() != "HWPUNIT"
         val format = StringBuilder()
+
+        fun toLevel(charShapes: Map<Int, CharShape>) = NumberingLevel(
+            format = format.toString(),
+            numberType = numberType,
+            startNumber = start,
+            charShapeId = charShapeId,
+            align = align,
+            widthAdjust = widthAdjust,
+            textOffset = if (!textOffsetPercent) textOffset else {
+                val size = charShapes[charShapeId]?.baseSize ?: 1000
+                XAttrs.clampLen((textOffset.toLong() * size / 100).toInt())
+            },
+        )
+    }
+
+    private class RawNumbering(val heads: List<ParaHeadData>, val start: Int) {
+        fun build(charShapes: Map<Int, CharShape>): Numbering {
+            val maxLevel = heads.maxOfOrNull { it.level }?.coerceIn(1, 10) ?: 0
+            val levels = ArrayList<NumberingLevel>(maxLevel)
+            for (lv in 1..maxLevel) {
+                levels.add(heads.firstOrNull { it.level == lv }?.toLevel(charShapes) ?: NumberingLevel(""))
+            }
+            return Numbering(levels, start)
+        }
     }
 
     private inner class ParaHeadNode(val d: ParaHeadData) : XNode() {
@@ -428,25 +489,8 @@ internal class HwpxHeaderReader {
         }
 
         override fun end() {
-            checkCount(numberings)
-            val maxLevel = heads.maxOfOrNull { it.level }?.coerceIn(1, 10) ?: 0
-            val levels = ArrayList<NumberingLevel>(maxLevel)
-            for (lv in 1..maxLevel) {
-                val d = heads.firstOrNull { it.level == lv }
-                levels.add(
-                    if (d == null) NumberingLevel("")
-                    else NumberingLevel(
-                        format = d.format.toString(),
-                        numberType = d.numberType,
-                        startNumber = d.start,
-                        charShapeId = d.charShapeId,
-                        align = d.align,
-                        widthAdjust = d.widthAdjust,
-                        textOffset = d.textOffset,
-                    ),
-                )
-            }
-            numberings[id] = Numbering(levels, start)
+            checkCount(rawNumberings)
+            rawNumberings[id] = RawNumbering(heads, start)
         }
     }
 

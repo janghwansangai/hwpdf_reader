@@ -438,7 +438,8 @@ class HwpxRichParserTest {
         assertEquals(-1310, p1.indent)
         assertEquals(1000, p1.marginLeft)
         assertEquals(500, p1.spacingBefore)
-        assertEquals(80, p1.spacingAfter)
+        // 글자 단위(CHAR): 값 × 바탕글 크기(스타일 0 → charPr 7, 12pt) / 200
+        assertEquals(80 * 1200 / 200, p1.spacingAfter)
         assertEquals(LineSpacingType.FIXED, p1.lineSpacingType)
         assertEquals(1300, p1.lineSpacing)
         assertTrue(p1.keepWithNext)
@@ -582,11 +583,162 @@ class HwpxRichParserTest {
         val p = doc.sections[0].paragraphs[0]
         assertEquals(-1, p.paraShapeId)
         val t = (p.content[0] as Inline.Object).obj as Table
-        assertTrue(t.rowCount in 1..65535 && t.colCount in 1..65535)
+        // 선언된 행/열 수는 셀이 차지하는 범위로 줄인다 (주소가 깨진 셀은 행 순서로 채움)
+        assertEquals(1, t.rowCount)
+        assertEquals(1, t.colCount)
+        assertEquals(1, t.cells.size)
         for (c in t.cells) assertTrue(c.row + c.rowSpan <= t.rowCount && c.col + c.colSpan <= t.colCount)
         assertTrue(t.layout.width <= 20_000_000)
         assertEquals(Inline.Text(8, "x", 0), p.content[1])
         // 줄 위치는 단조 증가로 고친다
         assertEquals(listOf(9, 9), p.lines.map { it.textStart })
+    }
+
+    @Test
+    fun tableCellsWithoutAddressAndHugeCounts() {
+        val sec = section(
+            """<hp:p><hp:run charPrIDRef="0"><hp:tbl rowCnt="2" colCnt="3"><hp:sz width="9000" height="2000"/><hp:pos treatAsChar="1"/>""" +
+                """<hp:tr><hp:tc><hp:cellSpan colSpan="2" rowSpan="1"/><hp:cellSz width="6000" height="1000"/></hp:tc><hp:tc><hp:cellSz width="3000" height="1000"/></hp:tc></hp:tr>""" +
+                """<hp:tr><hp:tc><hp:cellSz width="3000" height="1000"/></hp:tc><hp:tc><hp:cellSz width="3000" height="1000"/></hp:tc><hp:tc><hp:cellSz width="3000" height="1000"/></hp:tc></hp:tr></hp:tbl>""" +
+                """<hp:tbl rowCnt="60000" colCnt="60000"><hp:sz width="1000" height="1000"/><hp:tr><hp:tc><hp:cellAddr colAddr="5000" rowAddr="5000"/></hp:tc>""" +
+                """<hp:tc><hp:cellAddr colAddr="1" rowAddr="1"/><hp:cellSpan colSpan="9" rowSpan="9"/></hp:tc></hp:tr></hp:tbl></hp:run></hp:p>""",
+        )
+        val p = parse(zip("Contents/section0.xml" to sec)).sections[0].paragraphs[0]
+        val t = (p.content[0] as Inline.Object).obj as Table
+        assertEquals(listOf(0 to 0, 0 to 2, 1 to 0, 1 to 1, 1 to 2), t.cells.map { it.row to it.col })
+        assertEquals(2, t.cells[0].colSpan)
+        assertEquals(2, t.rowCount)
+        assertEquals(3, t.colCount)
+        // 한 방향 4096 칸을 넘는 셀은 버리고, 선언 수는 셀 범위(1 + 9)로 줄인다
+        val big = (p.content[1] as Inline.Object).obj as Table
+        assertEquals(10, big.rowCount)
+        assertEquals(10, big.colCount)
+        assertEquals(1, big.cells.size)
+        assertEquals(9, big.cells[0].rowSpan)
+    }
+
+    // ------------------------------------------------------------ 개체 세부
+
+    @Test
+    fun hyperlinkComposeVideoAndForms() {
+        val sec = section(
+            """<hp:p><hp:run charPrIDRef="2">""" +
+                """<hp:ctrl><hp:fieldBegin id="1" type="HYPERLINK"><hp:parameters><hp:stringParam name="Command">www.daum.net|-;1;0;0</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>""" +
+                """<hp:ctrl><hp:fieldEnd beginIDRef="1"/></hp:ctrl>""" +
+                """<hp:ctrl><hp:fieldBegin id="2" type="HYPERLINK"><hp:parameters><hp:stringParam name="Command">http\://a.com/b\?c=1;1;0;0;</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>""" +
+                """<hp:compose circleType="CHAR" composeType="OVERLAP" composeText="AO"><hp:charPr prIDRef="7"/><hp:charPr prIDRef="4294967295"/></hp:compose>""" +
+                """<hp:video videotype="Local" fileIDRef="image1" imageIDRef="image2"><hp:sz width="5000" height="4000"/><hp:pos treatAsChar="1"/></hp:video>""" +
+                """<hp:btn caption="확인" backColor="#F0F0F0"><hp:sz width="3000" height="1000"/><hp:pos treatAsChar="1"/></hp:btn>""" +
+                """<hp:rect ratio="20"><hp:offset x="0" y="0"/><hp:orgSz width="1000" height="500"/><hp:curSz width="2000" height="1000"/>""" +
+                """<hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="2" e2="0" e3="0" e4="0" e5="2" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>""" +
+                """<hp:lineShape color="#FF0000" width="0" style="SOLID"/><hc:pt0 x="0" y="0"/><hc:pt1 x="1000" y="0"/><hc:pt2 x="1000" y="500"/><hc:pt3 x="0" y="500"/>""" +
+                """<hp:sz width="2000" height="1000"/><hp:pos treatAsChar="1"/></hp:rect></hp:run></hp:p>""",
+        )
+        val c = parse(zip("Contents/section0.xml" to sec)).sections[0].paragraphs[0].content
+        assertEquals("http://www.daum.net", (c[0] as Inline.FieldStart).url)
+        assertEquals("http://a.com/b?c=1", (c[2] as Inline.FieldStart).url)
+        // 글자 겹침: 첫 글자의 글자 모양
+        assertEquals(Inline.Text(24, "AO", 7), c[3])
+        val video = (c[4] as Inline.Object).obj as Picture
+        assertEquals(32, c[4].start)
+        assertEquals("image2", video.imageId)
+        val btn = (c[5] as Inline.Object).obj as Shape
+        assertEquals(ShapeKind.OTHER, btn.kind)
+        assertEquals("확인", btn.text)
+        assertEquals(0xF0F0F0, btn.fill?.fillColor)
+        assertTrue(btn.line.visible)
+        val rect = (c[6] as Inline.Object).obj as Shape
+        assertEquals(20, rect.cornerRadius)
+        // 꼭짓점은 변환 행렬(2배)을 적용한 개체 상자 기준
+        assertEquals(listOf(0, 0, 2000, 0, 2000, 1000, 0, 1000), rect.points)
+        // 굵기 0 인 선은 선 없음 (HWP 파서와 같음)
+        assertFalse(rect.line.visible)
+    }
+
+    @Test
+    fun relativeSizes() {
+        val sec = section(
+            """<hp:p><hp:run charPrIDRef="0"><hp:secPr><hp:pagePr landscape="WIDELY" width="60000" height="80000"><hp:margin left="10000" right="10000" top="5000" bottom="5000" header="0" footer="0" gutter="0"/></hp:pagePr></hp:secPr>""" +
+                // 수식: 크기 기준이 COLUMN 이어도 값은 실제 폭
+                """<hp:equation baseUnit="1000"><hp:sz width="14872" widthRelTo="COLUMN" height="2363" heightRelTo="ABSOLUTE"/><hp:pos treatAsChar="1"/><hp:script>a</hp:script></hp:equation>""" +
+                // 표: 종이 폭의 50.00%
+                """<hp:tbl rowCnt="1" colCnt="1"><hp:sz width="5000" widthRelTo="PAPER" height="1000" heightRelTo="ABSOLUTE"/><hp:pos treatAsChar="1"/><hp:tr><hp:tc><hp:cellAddr colAddr="0" rowAddr="0"/></hp:tc></hp:tr></hp:tbl>""" +
+                // 도형: 변환 행렬로 실제 크기 (sz 는 단 폭 40000 의 25%)
+                """<hp:ellipse><hp:offset x="0" y="0"/><hp:orgSz width="4000" height="2000"/><hp:curSz width="0" height="2000"/>""" +
+                """<hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="2.5" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>""" +
+                """<hp:sz width="2500" widthRelTo="COLUMN" height="2000" heightRelTo="ABSOLUTE"/><hp:pos treatAsChar="0"/></hp:ellipse></hp:run></hp:p>""",
+        )
+        val c = parse(zip("Contents/section0.xml" to sec)).sections[0].paragraphs[0].content
+        assertEquals(14872, (c[0] as Inline.Object).obj.layout.width)
+        assertEquals(30000, (c[1] as Inline.Object).obj.layout.width)
+        assertEquals(10000, (c[2] as Inline.Object).obj.layout.width)
+        assertEquals(2000, (c[2] as Inline.Object).obj.layout.height)
+    }
+
+    @Test
+    fun nestedContainerOriginIsDetected() {
+        fun doc(childX: Int, childY: Int): Shape {
+            // 바깥 묶음(0,0 18000x10000) 안에 (10000,5000) 에 놓인 안쪽 묶음(6000x4000), 그 안의 사각형(2000x1000)
+            val sec = section(
+                """<hp:p><hp:run charPrIDRef="0"><hp:container><hp:offset x="0" y="0"/><hp:orgSz width="18000" height="10000"/>""" +
+                    """<hp:container><hp:offset x="10000" y="5000"/><hp:orgSz width="6000" height="4000"/><hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="10000" e4="0" e5="1" e6="5000"/></hp:renderingInfo>""" +
+                    """<hp:rect><hp:offset x="$childX" y="$childY"/><hp:orgSz width="2000" height="1000"/><hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="$childX" e4="0" e5="1" e6="$childY"/></hp:renderingInfo></hp:rect>""" +
+                    """</hp:container><hp:sz width="18000" height="10000"/><hp:pos treatAsChar="0"/></hp:container></hp:run></hp:p>""",
+            )
+            return (parse(zip("Contents/section0.xml" to sec)).sections[0].paragraphs[0].content[0] as Inline.Object).obj as Shape
+        }
+        // 자식 좌표가 안쪽 묶음 기준(1000)이면 그대로
+        val a = doc(1000, 0)
+        val innerA = a.children[0] as Shape
+        assertEquals(10000, innerA.layout.horzOffset)
+        assertEquals(5000, innerA.layout.vertOffset)
+        assertEquals(1000, innerA.children[0].layout.horzOffset)
+        // 바깥 묶음 기준(11000)이면 안쪽 묶음 왼쪽 위를 뺀다
+        val b = doc(11000, 5000)
+        assertEquals(1000, (b.children[0] as Shape).children[0].layout.horzOffset)
+        assertEquals(0, (b.children[0] as Shape).children[0].layout.vertOffset)
+    }
+
+    @Test
+    fun numberingOffsetsAndBeginNumber() {
+        val head = """<?xml version="1.0" encoding="UTF-8"?><hh:head xmlns:hh="h" xmlns:hc="c"><hh:beginNum page="5" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/><hh:refList>""" +
+            """<hh:charProperties><hh:charPr id="3" height="2000"/></hh:charProperties>""" +
+            """<hh:numberings><hh:numbering id="1" start="0">""" +
+            """<hh:paraHead start="1" level="1" align="LEFT" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="3">^1.</hh:paraHead>""" +
+            """<hh:paraHead start="1" level="2" align="RIGHT" textOffsetType="HWPUNIT" textOffset="700" numFormat="LATIN_SMALL" charPrIDRef="4294967295">^2)</hh:paraHead>""" +
+            """<hh:paraHead start="1" level="3" textOffset="30" numFormat="DIGIT" charPrIDRef="4294967295">^3</hh:paraHead></hh:numbering></hh:numberings></hh:refList></hh:head>"""
+        val doc = parse(zip("Contents/header.xml" to head, "Contents/section0.xml" to section("<hp:p/>")))
+        val n = doc.numberings[1]!!
+        // 글자 크기에 대한 % 는 번호 글자 모양(없으면 10pt)으로 HWPUNIT 으로 바꾼다 (HWP 파서와 같음)
+        assertEquals(1000, n.levels[0].textOffset)
+        assertEquals(700, n.levels[1].textOffset)
+        assertEquals(300, n.levels[2].textOffset)
+        assertEquals(Align.RIGHT, n.levels[1].align)
+        assertEquals(com.fastreader.app.core.doc.NumberType.LATIN_LOWER, n.levels[1].numberType)
+        // 문서 시작 쪽 번호
+        assertEquals(5, doc.sections[0].startPageNumber)
+    }
+
+    // ------------------------------------------------------------ 패키지 세부
+
+    @Test
+    fun oddEntryNamesAndPaths() {
+        val bos = ByteArrayOutputStream()
+        // UTF-8 표시 없이 ISO-8859-1 로 쓴 이름(UTF-8 로는 잘못된 바이트)이 앞에 있어도 끝까지 읽는다
+        ZipOutputStream(bos, Charsets.ISO_8859_1).use { z ->
+            z.putNextEntry(ZipEntry("BinData/café.bin"))
+            z.write(byteArrayOf(1, 2, 3))
+            z.closeEntry()
+            // 구역이 Contents/ 밖에 있어도 루트 요소로 알아본다
+            z.putNextEntry(ZipEntry("Body/section0.xml"))
+            z.write(section("""<hp:p><hp:run charPrIDRef="0"><hp:t>본문</hp:t></hp:run></hp:p>""").toByteArray())
+            z.closeEntry()
+            z.putNextEntry(ZipEntry("Chart/chart1.xml"))
+            z.write("<c:chartSpace xmlns:c=\"x\"><c:chart/></c:chartSpace>".toByteArray())
+            z.closeEntry()
+        }
+        val doc = parse(bos.toByteArray())
+        assertNull(doc.notice)
+        assertEquals("본문", doc.sections.single().paragraphs[0].plainText)
     }
 }

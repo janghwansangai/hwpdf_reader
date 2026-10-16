@@ -80,7 +80,8 @@ object HwpxRichParser {
             var sawEntry = false
             var entries = 0
             try {
-                ZipInputStream(input.buffered(64 * 1024)).use { zis ->
+                // UTF-8 표시가 없는 이름은 ISO-8859-1 로 읽어 이름 때문에 멈추지 않게 한다 (필요한 이름은 모두 ASCII)
+                ZipInputStream(input.buffered(64 * 1024), Charsets.ISO_8859_1).use { zis ->
                     while (true) {
                         val entry = try {
                             zis.nextEntry
@@ -126,7 +127,9 @@ object HwpxRichParser {
                     parseSmallXml(zis, m.root)
                     if (m.items.isNotEmpty() || manifest == null) manifest = m
                 }
-                name.startsWith("contents/") && name.endsWith(".xml") -> parseContentXml(name, zis)
+                // 머리 정보/구역은 보통 Contents/ 아래지만 경로는 매니페스트가 정한다: 루트 요소(head/sec)로 고른다
+                name.endsWith(".xml") && !name.startsWith("meta-inf/") && !name.startsWith("preview/") &&
+                    name != "version.xml" && name != "settings.xml" -> parseContentXml(name, zis)
                 name.startsWith("bindata/") -> putImage(name, zis)
                 name == "preview/prvtext.txt" -> preview = readText(zis, MAX_PREVIEW)
             }
@@ -304,10 +307,24 @@ object HwpxRichParser {
                 numberings = h.numberings,
                 bullets = h.bullets,
                 styles = h.styles,
-                sections = ordered.map { it.section },
+                sections = withBeginNumber(ordered.map { it.section }, h.startPage),
                 images = imageMap,
                 notice = notice,
             )
+        }
+
+        /** 문서 시작 쪽 번호(hh:beginNum)가 1 이 아니면 첫 구역의 시작 쪽 번호로 넣는다 (구역에 따로 정해져 있으면 그것을 쓴다) */
+        private fun withBeginNumber(list: List<Section>, begin: Int): List<Section> {
+            val first = list.firstOrNull() ?: return list
+            if (begin <= 1 || begin > 1_000_000 || first.startPageNumber != 0) return list
+            val s = Section(
+                page = first.page, columns = first.columns, paragraphs = first.paragraphs,
+                headers = first.headers, footers = first.footers, pageNumbering = first.pageNumbering,
+                startPageNumber = begin, outlineNumberingId = first.outlineNumberingId,
+                hideFirstHeader = first.hideFirstHeader, hideFirstFooter = first.hideFirstFooter,
+                hideFirstPageNumber = first.hideFirstPageNumber,
+            )
+            return listOf(s) + list.drop(1)
         }
 
         /** 본문을 못 읽었을 때 Preview/PrvText.txt 로 만든 문서 */

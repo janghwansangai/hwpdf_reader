@@ -342,13 +342,29 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
 
         /** 글자로 바꿔 넣는 개체 (글자 겹침, 덧말). 아니면 null (알 수 없는 요소는 8칸 컨트롤로 본다) */
-        private fun textLikeObject(name: String, a: XAttrs, start: Int): XNode? {
-            when (name) {
-                "compose" -> pb.addTextAt(start, charPr, composeDisplay(a.str("circleType"), a.str("composeText")))
-                "dutmal" -> return DutmalNode(pb, start, charPr, a)
+        private fun textLikeObject(name: String, a: XAttrs, start: Int): XNode? = when (name) {
+            "compose" -> ComposeNode(pb, start, charPr, a)
+            "dutmal" -> DutmalNode(pb, start, charPr, a)
+            else -> null
+        }
+    }
+
+    /** 글자 겹침: 겹친 글자를 8칸 자리의 처음에 글자로 넣는다. 글자 모양은 첫 글자의 것(hp:charPr) */
+    private inner class ComposeNode(private val pb: ParaBuilder, private val start: Int, private val charPr: Int, a: XAttrs) : XNode() {
+        private val text = composeDisplay(a.str("circleType"), a.str("composeText"))
+        private var shape = -1
+        private var seen = false
+
+        override fun child(name: String, a: XAttrs): XNode? {
+            if (name == "charPr" && !seen) {
+                seen = true
+                val id = a.int("prIDRef", -1)
+                if (id >= 0 && id != 0xFFFF) shape = id
             }
             return null
         }
+
+        override fun end() = pb.addTextAt(start, if (shape >= 0) shape else charPr, text)
     }
 
     private inner class TNode(private val pb: ParaBuilder, private val charPr: Int) : XNode() {
@@ -503,7 +519,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 "CLICK_HERE" -> FieldKind.CLICK_HERE
                 else -> FieldKind.OTHER
             }
-            val url = if (kind == FieldKind.HYPERLINK) (path?.trim()?.takeIf { it.isNotEmpty() } ?: commandUrl(command)) else null
+            val url = if (kind == FieldKind.HYPERLINK) (normalizeUrl(path) ?: commandUrl(command)) else null
             done(id, kind, url)
         }
     }
@@ -532,7 +548,10 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         return first.take(8)
     }
 
-    /** Command 의 "http\://a.b/c;1;0;0;" 꼴에서 주소만 꺼낸다 */
+    /**
+     * Command 의 "http\://a.b/c;1;0;0;" 꼴에서 주소만 꺼낸다 (HWP 파서와 같은 규칙).
+     * 주소 안의 ':', ';', '?' 등은 '\' 로 이스케이프되고, "주소|대상" 이면 '|' 앞까지. "www." 로 시작하면 http:// 를 붙인다.
+     */
     private fun commandUrl(cmd: String?): String? {
         if (cmd.isNullOrBlank()) return null
         val sb = StringBuilder()
@@ -544,11 +563,16 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 i += 2
                 continue
             }
-            if (c == ';') break
+            if (c == ';' || c == '|') break
             sb.append(c)
             i++
         }
-        return sb.toString().trim().takeIf { it.isNotEmpty() }
+        return normalizeUrl(sb.toString())
+    }
+
+    private fun normalizeUrl(s: String?): String? {
+        val url = s?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return if (url.startsWith("www.", ignoreCase = true)) "http://$url" else url
     }
 
     private inner class ColPrNode(a: XAttrs) : XNode() {
@@ -677,10 +701,13 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 it.text = a.str("text").take(4096).replace("␍␊", "\n").replace('␊', '\n').replace('␍', '\n')
             }
             "equation" -> EquationNode(a)
-            "chart", "video" -> ShapeNode(a, ShapeKind.OTHER)
-            "btn", "radioBtn", "checkBtn" -> ShapeNode(a, ShapeKind.OTHER).also { it.text = a.str("caption").take(1024) }
-            "comboBox", "listBox" -> ShapeNode(a, ShapeKind.OTHER).also { it.text = a.str("selectedValue").take(1024) }
-            "edit", "scrollBar" -> ShapeNode(a, ShapeKind.OTHER)
+            "chart" -> ShapeNode(a, ShapeKind.OTHER)
+            // 동영상은 미리보기 그림(imageIDRef)으로 보여 준다
+            "video" -> PictureNode(a, a["imageIDRef"])
+            // 양식 개체: 글자(단추 이름, 선택 값, 입력 글자)와 바탕색만
+            "btn", "radioBtn", "checkBtn" -> ShapeNode(a, ShapeKind.OTHER).also { it.form(a, a.str("caption")) }
+            "comboBox", "listBox" -> ShapeNode(a, ShapeKind.OTHER).also { it.form(a, a.str("selectedValue")) }
+            "edit", "scrollBar" -> ShapeNode(a, ShapeKind.OTHER).also { it.form(a, "") }
             else -> return null
         }
         ctx.countObject()
@@ -837,7 +864,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
 
         /** 원래 크기 사각형을 변환한 경계 상자 [x, y, w, h] */
-        protected fun bbox(): DoubleArray {
+        fun bbox(): DoubleArray {
             val m = composite()
             val w = orgWidth().toDouble()
             val h = orgHeight().toDouble()
@@ -868,25 +895,31 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             return out
         }
 
+        /** 크기 기준(widthRelTo 등)을 무시하고 sz 를 그대로 쓰는 개체 (수식은 내용으로 크기가 정해진다) */
+        protected open val absoluteSize = false
+
         /** 이 개체의 배치 상자 [x, y, w, h]: 묶음 자식이면 변환 결과, 아니면 hp:sz */
         protected fun layoutBox(): DoubleArray {
             if (inContainer) return bbox()
-            // widthRelTo/heightRelTo 가 ABSOLUTE 가 아니면 sz 는 기준 길이의 1/100 % 이다.
-            // 도형은 변환 행렬로 실제 크기를 알 수 있으므로 그것을 쓰고, 표 등은 쪽/단 크기로 계산한다.
-            val box = if (matrices.isNotEmpty() && (szWRel != "ABSOLUTE" || szHRel != "ABSOLUTE")) bbox() else null
+            // widthRelTo/heightRelTo 가 ABSOLUTE 가 아니면 sz 는 기준 길이의 1/100 % 이다 (회전한 다각형 샘플로 확인: 5259 = 단 폭의 52.59%).
+            // 도형/그림은 변환 행렬로 실제 크기를 알 수 있으므로 그것을 쓰고, 표 등은 쪽/단 크기로 계산한다.
+            // 100% 를 넘는 값은 비율일 수 없으므로 HWPUNIT 으로 본다 (수식 샘플: COLUMN 기준인데 값은 실제 폭).
+            val wRel = !absoluteSize && szWRel != "ABSOLUTE" && szW in 0..10_000
+            val hRel = !absoluteSize && szHRel != "ABSOLUTE" && szH in 0..10_000
+            val box = if (matrices.isNotEmpty() && (wRel || hRel)) bbox() else null
             val w = when {
-                szWRel != "ABSOLUTE" && szW >= 0 -> box?.get(2)?.toInt() ?: percentOf(szW, refWidth(szWRel))
+                wRel -> box?.get(2)?.let { Math.round(it).toInt() } ?: percentOf(szW, refWidth(szWRel))
                 szW > 0 -> szW
                 curW > 0 -> curW
                 else -> orgW
             }
             val h = when {
-                szHRel != "ABSOLUTE" && szH >= 0 -> box?.get(3)?.toInt() ?: percentOf(szH, refHeight(szHRel))
+                hRel -> box?.get(3)?.let { Math.round(it).toInt() } ?: percentOf(szH, refHeight(szHRel))
                 szH > 0 -> szH
                 curH > 0 -> curH
                 else -> orgH
             }
-            return doubleArrayOf(0.0, 0.0, w.toDouble(), h.toDouble())
+            return doubleArrayOf(0.0, 0.0, XAttrs.clampLen(w).toDouble(), XAttrs.clampLen(h).toDouble())
         }
 
         private fun percentOf(v: Int, ref: Int) = (v.toLong() * ref / 10_000).toInt()
@@ -985,10 +1018,17 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 inMargin = insets(a)
                 null
             }
-            "tr" -> object : XNode() {
-                override fun child(name: String, a: XAttrs): XNode? = if (name == "tc") TcNode(a) else null
-            }
+            "tr" -> TrNode(trCount++)
             else -> null
+        }
+
+        private var trCount = 0
+
+        /** 행. 셀 주소(cellAddr)가 빠진 셀은 행 번호와 행 안 순서로 채운다 */
+        private inner class TrNode(val rowIndex: Int) : XNode() {
+            var nextCol = 0
+
+            override fun child(name: String, a: XAttrs): XNode? = if (name == "tc") TcNode(a, this) else null
         }
 
         private inner class CellData(a: XAttrs) {
@@ -1006,7 +1046,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             val paras = ArrayList<Paragraph>()
         }
 
-        private inner class TcNode(a: XAttrs) : XNode() {
+        private inner class TcNode(a: XAttrs, private val tr: TrNode) : XNode() {
             private val d = CellData(a)
 
             override fun child(name: String, a: XAttrs): XNode? {
@@ -1033,31 +1073,37 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             }
 
             override fun end() {
+                if (d.row < 0 || d.col < 0) {
+                    d.row = tr.rowIndex
+                    d.col = tr.nextCol
+                }
+                tr.nextCol = d.col + d.colSpan.coerceIn(1, MAX_GRID)
                 if (cells.size < MAX_CELLS) cells.add(d)
             }
         }
 
         override fun build(): DrawObject {
-            // 셀 주소가 빠진 표: 행 순서대로 채운다
-            var maxRow = 0
-            var maxCol = 0
-            val built = ArrayList<Cell>(cells.size)
-            var autoRow = 0
-            var autoCol = 0
-            for (d in cells) {
-                val col = if (d.col in 0 until MAX_DIM) d.col else autoCol
-                val row = if (d.row in 0 until MAX_DIM) d.row else autoRow
-                val colSpan = d.colSpan.coerceIn(1, MAX_DIM - col)
-                val rowSpan = d.rowSpan.coerceIn(1, MAX_DIM - row)
-                autoCol = col + colSpan
-                autoRow = row
-                maxRow = maxOf(maxRow, row + rowSpan)
-                maxCol = maxOf(maxCol, col + colSpan)
+            // 정상 문서: 선언된 행/열 수 = 셀들의 (주소 + 병합 수) 최댓값.
+            // 손상 문서: HWP 파서와 같이 셀이 실제로 차지하는 범위로 맞추되 한도(MAX_GRID)를 넘지 않게 한다
+            val valid = cells.filter { it.row in 0 until MAX_GRID && it.col in 0 until MAX_GRID }
+            var rows = rowCnt.coerceIn(0, MAX_GRID)
+            var cols = colCnt.coerceIn(0, MAX_GRID)
+            if (valid.isNotEmpty()) {
+                val rowEnd = valid.maxOf { it.row + maxOf(1, it.rowSpan).coerceAtMost(MAX_GRID) }
+                val colEnd = valid.maxOf { it.col + maxOf(1, it.colSpan).coerceAtMost(MAX_GRID) }
+                rows = maxOf(valid.maxOf { it.row + 1 }, minOf(rowCnt, rowEnd)).coerceAtMost(MAX_GRID)
+                cols = maxOf(valid.maxOf { it.col + 1 }, minOf(colCnt, colEnd)).coerceAtMost(MAX_GRID)
+            }
+            val built = ArrayList<Cell>(valid.size)
+            for (d in valid) {
+                if (d.row >= rows || d.col >= cols) continue
                 built.add(
                     Cell(
-                        col = col, row = row, colSpan = colSpan, rowSpan = rowSpan,
+                        col = d.col, row = d.row,
+                        colSpan = d.colSpan.coerceIn(1, cols - d.col),
+                        rowSpan = d.rowSpan.coerceIn(1, rows - d.row),
                         width = d.width, height = d.height,
-                        // hasMargin=0 이면 표의 안쪽 여백을 쓴다 (셀 줄 너비로 확인)
+                        // hasMargin=0 이면 표의 안쪽 여백을 쓴다 (샘플의 셀 줄 폭 = 셀 폭 - 표 안쪽 여백 으로 확인)
                         margin = if (d.hasMargin) d.margin ?: inMargin else inMargin,
                         borderFillId = d.borderFillId,
                         vertAlign = d.vertAlign,
@@ -1066,8 +1112,6 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                     ),
                 )
             }
-            val rows = if (rowCnt in maxRow..MAX_DIM && rowCnt > 0) rowCnt else maxRow
-            val cols = if (colCnt in maxCol..MAX_DIM && colCnt > 0) colCnt else maxCol
             return Table(
                 layout = layout(), caption = caption(),
                 rowCount = rows, colCount = cols, cellSpacing = cellSpacing, inMargin = inMargin,
@@ -1078,8 +1122,8 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
 
     // ------------------------------------------------------------ 그림
 
-    private inner class PictureNode(a: XAttrs) : ObjNode(a) {
-        private var imageId: String? = null
+    private inner class PictureNode(a: XAttrs, poster: String? = null) : ObjNode(a) {
+        private var imageId: String? = HwpxValues.imageId(poster)
         private var clip = IntArray(4) // left top right bottom
         private var dimW = 0
         private var dimH = 0
@@ -1132,7 +1176,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
 
     private inner class ShapeNode(a: XAttrs, private val kind: ShapeKind) : ObjNode(a) {
         var text = ""
-        private val corner = a.int("ratio").coerceIn(0, 50)
+        private val corner = a.int("ratio").coerceIn(0, 100)
         private val points = ArrayList<Int>()
 
         private fun pt(a: XAttrs) {
@@ -1148,6 +1192,8 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 "startPt", "endPt" -> if (kind == ShapeKind.LINE) pt(a)
                 // 다각형
                 "pt" -> if (kind == ShapeKind.POLYGON) pt(a)
+                // 사각형의 네 꼭짓점
+                "pt0", "pt1", "pt2", "pt3" -> if (kind == ShapeKind.RECT) pt(a)
                 // 호: 중심, 축1, 축2
                 "center", "ax1", "ax2" -> if (kind == ShapeKind.ARC) pt(a)
                 // 곡선: 선분마다 (x1,y1) 을 넣고 마지막 끝점을 더한다
@@ -1169,10 +1215,24 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             return null
         }
 
+        /** 양식 개체 (단추, 입력 상자 등): HWP 파서와 같이 회색 테두리 + 바탕색 */
+        private var formBack: Int? = null
+        private var isForm = false
+
+        fun form(a: XAttrs, label: String) {
+            isForm = true
+            text = label.take(1024)
+            formBack = HwpxValues.color(a["backColor"])
+        }
+
         override fun build(): DrawObject = Shape(
             layout = layout(), caption = caption(), kind = kind,
-            line = line ?: if (kind == ShapeKind.OTHER || kind == ShapeKind.OLE) Border() else Border(LineType.SOLID, 0.12f, 0),
-            fill = fillOrNull(),
+            line = line ?: when {
+                isForm -> Border(LineType.SOLID, 0.12f, 0x808080)
+                kind == ShapeKind.OTHER || kind == ShapeKind.OLE -> Border()
+                else -> Border(LineType.SOLID, 0.12f, 0)
+            },
+            fill = fillOrNull() ?: formBack?.let { BorderFill(fillColor = it) },
             cornerRadius = if (kind == ShapeKind.RECT) corner else 0,
             points = mapPoints(points),
             paragraphs = paragraphs,
@@ -1194,8 +1254,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
 
         override fun build(): DrawObject {
-            // 자식 좌표는 맨 바깥 묶음 기준으로 적혀 있으므로 안쪽 묶음이면 자기 상자 왼쪽 위를 뺀다
-            val origin = if (inContainer) bbox().let { doubleArrayOf(it[0], it[1]) } else doubleArrayOf(0.0, 0.0)
+            val origin = if (inContainer) nestedOrigin() else doubleArrayOf(0.0, 0.0)
             val objs = ArrayList<DrawObject>(children.size)
             for (c in children) {
                 c.parentOrigin = origin
@@ -1208,9 +1267,36 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             }
             return Shape(layout = layout(), caption = caption(), kind = ShapeKind.CONTAINER, line = Border(), children = objs)
         }
+
+        /**
+         * 안쪽 묶음의 자식 좌표 기준점. 자식 좌표가 바깥 묶음 기준인지 이 묶음 기준인지 샘플로 확인하지 못했으므로
+         * 자식들의 경계 상자가 어느 쪽 가정에서 이 묶음 상자 안에 더 잘 들어가는지로 고른다 (같으면 바깥 기준).
+         */
+        private fun nestedOrigin(): DoubleArray {
+            val me = bbox()
+            if (children.isEmpty()) return doubleArrayOf(me[0], me[1])
+            var x0 = Double.MAX_VALUE
+            var y0 = Double.MAX_VALUE
+            var x1 = -Double.MAX_VALUE
+            var y1 = -Double.MAX_VALUE
+            for (c in children) {
+                val b = try {
+                    c.bbox()
+                } catch (_: RuntimeException) {
+                    continue
+                }
+                x0 = minOf(x0, b[0]); y0 = minOf(y0, b[1])
+                x1 = maxOf(x1, b[0] + b[2]); y1 = maxOf(y1, b[1] + b[3])
+            }
+            if (x0 > x1) return doubleArrayOf(me[0], me[1])
+            fun overflow(ox: Double, oy: Double): Double =
+                maxOf(0.0, ox - x0) + maxOf(0.0, x1 - (ox + me[2])) + maxOf(0.0, oy - y0) + maxOf(0.0, y1 - (oy + me[3]))
+            return if (overflow(0.0, 0.0) < overflow(me[0], me[1])) doubleArrayOf(0.0, 0.0) else doubleArrayOf(me[0], me[1])
+        }
     }
 
     private inner class EquationNode(a: XAttrs) : ObjNode(a) {
+        override val absoluteSize = true
         private val baseSize = a.int("baseUnit", 1000).coerceIn(100, 100_000)
         private val color = HwpxValues.color(a["textColor"]) ?: 0
         private var script = ""
@@ -1227,6 +1313,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
 
     companion object {
         private const val MAX_CELLS = 200_000
-        private const val MAX_DIM = 65_535
+        /** 표 한 방향의 최대 칸 수 (HWP 파서와 같음) */
+        private const val MAX_GRID = 4096
     }
 }
