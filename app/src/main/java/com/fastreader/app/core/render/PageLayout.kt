@@ -192,6 +192,10 @@ internal class PageLayout(private val doc: RichDocument, private val index: DocI
                 st.flowH = y + h - st.flowY
                 st.cursorY = y + h + ps.spacingAfter.coerceIn(0, 50000)
                 markTop(st.page, si, pi)
+                // 떠 있는 개체는 흐름 상자 밖에 원래 위치로 (흐름 문단 안에서는 그리지 않는다)
+                for (inl in p.content) {
+                    if (inl is Inline.Object && !inl.obj.layout.treatAsChar) st.page.objects.add(ObjPlace(p, inl, st.col, y))
+                }
                 collectNotes(st.page, p, Int.MIN_VALUE, Int.MAX_VALUE)
                 continue
             }

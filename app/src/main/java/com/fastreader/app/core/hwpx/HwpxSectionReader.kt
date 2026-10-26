@@ -20,6 +20,7 @@ import com.fastreader.app.core.doc.NumberType
 import com.fastreader.app.core.doc.ObjAlign
 import com.fastreader.app.core.doc.ObjectLayout
 import com.fastreader.app.core.doc.PageApply
+import com.fastreader.app.core.doc.PageBorderFill
 import com.fastreader.app.core.doc.PageDef
 import com.fastreader.app.core.doc.PageNumberPos
 import com.fastreader.app.core.doc.PageNumbering
@@ -214,6 +215,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
     private var hideFirstHeader = false
     private var hideFirstFooter = false
     private var hideFirstPageNumber = false
+    private val pageBorderFills = ArrayList<PageBorderFill>()
     private var secPrSeen = false
 
     /** 구역 첫 쪽 추적 (최상위 문단의 줄 배치로) */
@@ -275,6 +277,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         hideFirstHeader = hideFirstHeader,
         hideFirstFooter = hideFirstFooter,
         hideFirstPageNumber = hideFirstPageNumber,
+        pageBorderFills = pageBorderFills,
     )
 
     /** 지금 읽는 최상위 문단 번호 */
@@ -436,6 +439,44 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                     hideFirstHeader = a.bool("hideFirstHeader")
                     hideFirstFooter = a.bool("hideFirstFooter")
                     hideFirstPageNumber = a.bool("hideFirstPageNum")
+                }
+                "pageBorderFill" -> {
+                    val id = a.int("borderFillIDRef")
+                    if (id <= 0 || pageBorderFills.size >= 3) return null
+                    val apply = when (a.str("type").trim().uppercase()) {
+                        "EVEN" -> PageApply.EVEN
+                        "ODD" -> PageApply.ODD
+                        else -> PageApply.BOTH
+                    }
+                    val base = PageBorderFill(
+                        apply, id,
+                        relativeToPaper = a.str("textBorder").trim().uppercase() != "CONTENT",
+                        includeHeader = a.bool("headerInside"),
+                        includeFooter = a.bool("footerInside"),
+                        fillArea = when (a.str("fillArea").trim().uppercase()) {
+                            "PAGE" -> 1
+                            "BORDER" -> 2
+                            else -> 0
+                        },
+                    )
+                    return object : XNode() {
+                        var pbf = base
+                        override fun child(name: String, a: XAttrs): XNode? {
+                            if (name == "offset") {
+                                pbf = pbf.copy(
+                                    offset = Insets(
+                                        left = a.len("left", 1417).coerceIn(0, 100000), right = a.len("right", 1417).coerceIn(0, 100000),
+                                        top = a.len("top", 1417).coerceIn(0, 100000), bottom = a.len("bottom", 1417).coerceIn(0, 100000),
+                                    ),
+                                )
+                            }
+                            return null
+                        }
+
+                        override fun end() {
+                            pageBorderFills.add(pbf)
+                        }
+                    }
                 }
                 "pagePr" -> {
                     val landscape = a.str("landscape").trim().uppercase() == "NARROWLY"

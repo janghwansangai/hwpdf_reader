@@ -3,6 +3,8 @@ package com.fastreader.app.core.hwp
 import com.fastreader.app.core.CorruptDocumentException
 import com.fastreader.app.core.doc.AutoNumberKind
 import com.fastreader.app.core.doc.BreakType
+import com.fastreader.app.core.doc.Insets
+import com.fastreader.app.core.doc.PageBorderFill
 import com.fastreader.app.core.doc.Caption
 import com.fastreader.app.core.doc.ColumnDef
 import com.fastreader.app.core.doc.DrawObject
@@ -98,6 +100,7 @@ internal class HwpSectionReader(
     private var pageDef: PageDef? = null
     private var columns: ColumnDef? = null
     private val headers = ArrayList<HeaderFooter>()
+    private val pageBorderFills = ArrayList<PageBorderFill>()
     private val footers = ArrayList<HeaderFooter>()
     private var pageNumbering: PageNumbering? = null
     private var startPageNumber = 0
@@ -154,6 +157,7 @@ internal class HwpSectionReader(
             hideFirstHeader = hideFirstHeader,
             hideFirstFooter = hideFirstFooter,
             hideFirstPageNumber = hideFirstPageNumber,
+            pageBorderFills = pageBorderFills,
         )
     }
 
@@ -440,6 +444,30 @@ internal class HwpSectionReader(
         hideFirstPageNumber = hideFirstPageNumber || prop and 0x20 != 0
         val pd = t.firstChild(k, HwpTags.PAGE_DEF)
         pageDef = if (pd >= 0) HwpControlReader.pageDef(t.reader(pd)) else PageDef()
+        // 쪽 테두리/배경: 양쪽, 짝수쪽, 홀수쪽 순서
+        var n = 0
+        t.forChildren(k) { c ->
+            if (t.tag[c] == HwpTags.PAGE_BORDER_FILL && n < 3) {
+                val pr = t.reader(c)
+                val bp = pr.s32()
+                val offset = Insets(left = pr.u16(), right = pr.u16(), top = pr.u16(), bottom = pr.u16())
+                val bfId = pr.u16()
+                val apply = when (n) {
+                    1 -> PageApply.EVEN
+                    2 -> PageApply.ODD
+                    else -> PageApply.BOTH
+                }
+                n++
+                if (bfId > 0 && !pr.overrun) {
+                    pageBorderFills.add(
+                        PageBorderFill(
+                            apply, bfId, relativeToPaper = bp and 1 != 0, includeHeader = bp and 2 != 0,
+                            includeFooter = bp and 4 != 0, fillArea = (bp ushr 3) and 3, offset = offset,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     // ---- 머리말/꼬리말

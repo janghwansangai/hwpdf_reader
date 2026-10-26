@@ -149,7 +149,8 @@ internal class Css(private val doc: RichDocument, private val mode: ViewMode, pr
                 Align.LEFT -> "left"
                 Align.RIGHT -> "right"
                 Align.CENTER -> "center"
-                Align.JUSTIFY, Align.DISTRIBUTE, Align.DISTRIBUTE_SPACE -> "justify"
+                // 좁은 화면에서 어절 단위로 줄을 바꾸는 한국어를 양쪽 정렬하면 띄어쓰기가 크게 벌어지므로 왼쪽 정렬
+                Align.JUSTIFY, Align.DISTRIBUTE, Align.DISTRIBUTE_SPACE -> "left"
             },
         ).append(';')
         // 여백/들여쓰기는 화면 폭에 맞게 줄인다 (1000 HWPUNIT = 10pt → 0.6rem)
@@ -207,6 +208,23 @@ internal class Css(private val doc: RichDocument, private val mode: ViewMode, pr
     }
 
     fun hasBorder(bf: BorderFill) = bf.left.visible || bf.right.visible || bf.top.visible || bf.bottom.visible
+
+    /** 네 변 테두리를 인라인 style 선언으로 (읽기 모드 표 셀/문단/글상자용) */
+    fun borderDecl(sb: StringBuilder, bf: BorderFill) {
+        side(sb, "top", bf.top)
+        side(sb, "right", bf.right)
+        side(sb, "bottom", bf.bottom)
+        side(sb, "left", bf.left)
+    }
+
+    /** 한 선을 CSS border 값으로 ("1px solid #000") */
+    fun borderValue(b: Border): String {
+        if (!b.visible) return "none"
+        val style = borderStyle(b.type)
+        var w = bwPx(b)
+        if (style == "double") w = w.coerceAtLeast(3.0)
+        return StringBuilder().pxd(w).append(' ').append(style).append(' ').append(lineColor(b.color)).toString()
+    }
 
     /** 배경 CSS 선언 (없으면 null) */
     fun background(bf: BorderFill): String? {

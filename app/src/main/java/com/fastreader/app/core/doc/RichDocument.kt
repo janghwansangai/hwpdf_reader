@@ -255,6 +255,20 @@ data class PageNumbering(
     val fromParagraph: Int = 0,
 )
 
+/** 쪽 테두리/배경 (한글 "쪽 테두리/배경") */
+data class PageBorderFill(
+    val apply: PageApply,
+    val borderFillId: Int,
+    /** 테두리 위치 기준: true 종이, false 본문 */
+    val relativeToPaper: Boolean = true,
+    val includeHeader: Boolean = false,
+    val includeFooter: Boolean = false,
+    /** 채울 영역: 0 종이, 1 쪽(본문 기준 영역), 2 테두리 안쪽 */
+    val fillArea: Int = 0,
+    /** 기준에서 테두리까지 간격 (종이 기준이면 안쪽으로, 본문 기준이면 바깥쪽으로) */
+    val offset: Insets = Insets(1417, 1417, 1417, 1417),
+)
+
 class Section(
     val page: PageDef,
     val columns: ColumnDef = ColumnDef(),
@@ -270,6 +284,8 @@ class Section(
     val hideFirstHeader: Boolean = false,
     val hideFirstFooter: Boolean = false,
     val hideFirstPageNumber: Boolean = false,
+    /** 쪽 테두리/배경 (양쪽/짝수/홀수) */
+    val pageBorderFills: List<PageBorderFill> = emptyList(),
 )
 
 // ---------------------------------------------------------------- 문단

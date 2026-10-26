@@ -47,6 +47,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
 
     fun render(): String {
         val sb = StringBuilder(16 * 1024)
+        pageBorderFill(sb)
         val bodyL = def.bodyLeft
         val bodyT = def.bodyTop
         // 본문
@@ -77,6 +78,39 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         return sb.toString()
     }
 
+    // ------------------------------------------------------------------ 쪽 테두리/배경
+
+    /** 쪽 테두리/배경. 홀/짝 설정은 실제 테두리나 배경이 있을 때만 양쪽 설정보다 우선한다 */
+    private fun pageBorderFill(sb: StringBuilder) {
+        val list = section.pageBorderFills
+        if (list.isEmpty()) return
+        fun usable(p: com.fastreader.app.core.doc.PageBorderFill): BorderFill? =
+            doc.borderFills[p.borderFillId]?.takeIf { css.hasBorder(it) || css.background(it) != null }
+        val odd = pg.number % 2 != 0
+        val specific = list.firstOrNull { it.apply == (if (odd) com.fastreader.app.core.doc.PageApply.ODD else com.fastreader.app.core.doc.PageApply.EVEN) && usable(it) != null }
+        val pbf = specific ?: list.firstOrNull { it.apply == com.fastreader.app.core.doc.PageApply.BOTH && usable(it) != null } ?: return
+        val bf = usable(pbf) ?: return
+        val o = pbf.offset
+        // 본문 기준 영역 (머리말/꼬리말 포함 여부)
+        val bTop = if (pbf.includeHeader) def.marginTop else def.bodyTop
+        val bBottom = if (pbf.includeFooter) def.height - def.marginBottom else def.bodyTop + def.bodyHeight
+        val bodyRect = intArrayOf(def.bodyLeft, bTop, def.bodyWidth, bBottom - bTop)
+        val borderRect = if (pbf.relativeToPaper) intArrayOf(o.left, o.top, def.width - o.left - o.right, def.height - o.top - o.bottom)
+        else intArrayOf(bodyRect[0] - o.left, bodyRect[1] - o.top, bodyRect[2] + o.left + o.right, bodyRect[3] + o.top + o.bottom)
+        if (css.background(bf) != null) {
+            val f = when (pbf.fillArea) {
+                1 -> bodyRect
+                2 -> borderRect
+                else -> intArrayOf(0, 0, def.width, def.height)
+            }
+            sb.append("<div class=\"pbg g").append(pbf.borderFillId).append("\" style=\"").box(f[0], f[1], f[2], f[3]).append("\"></div>")
+        }
+        if (css.hasBorder(bf)) {
+            sb.append("<div class=\"pbg\" style=\"").box(borderRect[0], borderRect[1], borderRect[2], borderRect[3])
+                .append("\"><i class=\"bx k").append(pbf.borderFillId).append("\"></i></div>")
+        }
+    }
+
     // ------------------------------------------------------------------ 줄
 
     /**
@@ -103,7 +137,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             if (w < 0) w = 0
             val y = dy + line.vertPos
             val h = maxOf(0, line.height)
-            val b = if (line.baseline in 1..maxOf(1, h * 2)) line.baseline else (h * 85 / 100)
+            val b = baselineOf(line, h)
             val cls = when (ps.align) {
                 Align.JUSTIFY -> if (li == last || split.endsWithBreak[k]) "al" else "aj"
                 Align.DISTRIBUTE -> "ad"
@@ -121,7 +155,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             sb.append(" style=\"left:").px(x).append(";top:").px(y).append(";height:").px(h)
             if (ratio != 100) {
                 val r = ratio / 100.0
-                sb.append(";width:").pxd(Html.px(w) / r).append(";transform:scaleX(").num(r).append(")\" data-w=\"").num(Html.px(w)).append('"')
+                sb.append(";width:").pxd(Html.px(w) / r).append(";transform:scaleX(").num(r).append(")\" data-r=\"").num(r).append('"')
             } else sb.append(";width:").px(w).append('"')
             sb.append("><i class=\"s\" style=\"height:").px(b).append("\"></i>")
             if (li == 0 && heading != null) rw.heading(sb, heading, p)
@@ -135,13 +169,25 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         // 이 문단에 속한 떠 있는 개체는 호출한 쪽에서 (본문은 PageLayout, 셀/글상자는 area)
     }
 
+    /**
+     * 줄 위에서 베이스라인까지 거리. 한글이 계산한 값은 글자 높이의 약 85% 인데, 다른 프로그램이 만든 문서에는
+     * 50% 같은 임시값이 들어 있는 경우가 있어(글자가 칸 위로 올라감) 그런 값은 표준 비율로 바꾼다.
+     */
+    private fun baselineOf(line: com.fastreader.app.core.doc.LineSeg, h: Int): Int {
+        val th = if (line.textHeight in 1..h) line.textHeight else h
+        val std = h - th + th * 85 / 100
+        if (th <= 0) return std
+        val ratio = line.baseline * 100 / th
+        return if (line.baseline in 1..h && ratio >= 70) line.baseline else std
+    }
+
     /** 지금 쓰는 줄의 베이스라인 아래 높이 (글자처럼 취급한 개체를 줄 아래에 맞추는 데 씀) */
     private var descent = 0
 
     /** 줄 정보 없는 문단 묶음: 영역 안에서 일반 흐름으로 */
     private fun flowBlock(sb: StringBuilder, paras: List<Paragraph>, x: Int, y: Int, w: Int, depth: Int) {
         sb.append("<div class=\"fb\" style=\"left:").px(x).append(";top:").px(y).append(";width:").px(w).append("\">")
-        val fw = FlowWriter(ctx, sbOwner = null, pageUnits = true, dark = false)
+        val fw = FlowWriter(ctx, pageUnits = true, dark = false)
         for (p in paras) fw.paragraph(sb, p, depth)
         sb.append("</div>")
     }
@@ -165,6 +211,10 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
                     i++
                 }
                 flowBlock(sb, group, ox, oy + cursor, areaW, depth + 1)
+                // 줄 정보 없는 문단의 떠 있는 개체 (흐름 상자 위쪽 기준으로 근사)
+                for (gp in group) for (inl in gp.content) {
+                    if (inl is Inline.Object && !inl.obj.layout.treatAsChar) areaObject(sb, inl, gp, ox, oy + cursor, areaW, depth + 1)
+                }
                 cursor += ctx.geom.paragraphsHeight(group, areaW, depth + 1)
                 continue
             }
@@ -355,18 +405,20 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             val cy = cy0 - fragStart + shift + sp / 2
             val cw = g.w(pc) - sp
             ch -= sp
-            cell(sb, pc, cx, cy, cw, ch, depth)
+            cell(sb, pc, cx, cy, cw, ch, depth, ownBorder = sp > 0)
         }
+        // 칸 사이 간격이 없으면 격자선을 한 번씩만 그린다 (이웃 칸이 같은 선을 두 번 그리면 픽셀 맞춤 때문에 굵어 보임)
+        if (sp == 0) gridLines(sb, g, extra, fragStart, fragEnd, shift)
     }
 
-    private fun cell(sb: StringBuilder, pc: TableGeom.PlacedCell, x: Int, y: Int, w: Int, h: Int, depth: Int) {
+    private fun cell(sb: StringBuilder, pc: TableGeom.PlacedCell, x: Int, y: Int, w: Int, h: Int, depth: Int, ownBorder: Boolean) {
         val c = pc.cell
         val bf = doc.borderFills[c.borderFillId]
         sb.append("<div class=\"td")
         if (bf != null && css.background(bf) != null) sb.append(" g").append(c.borderFillId)
         sb.append("\" style=\"").box(x, y, w, h).append("\">")
         if (bf != null) {
-            if (css.hasBorder(bf)) sb.append("<i class=\"bx k").append(c.borderFillId).append("\"></i>")
+            if (ownBorder && css.hasBorder(bf)) sb.append("<i class=\"bx k").append(c.borderFillId).append("\"></i>")
             diagonals(sb, bf, w, h)
         }
         if (depth <= DocIndex.MAX_DEPTH) {
@@ -382,6 +434,105 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             area(sb, c.paragraphs, m.left, m.top + off, innerW, depth + 1)
         }
         sb.append("</div>")
+    }
+
+    /**
+     * 표 격자선. 격자 한 칸 단위로 맞닿은 두 셀의 테두리 중 강한 것을 고르고, 같은 선이 이어지면 하나로 합쳐 그린다.
+     * 병합 셀 안쪽 경계는 그리지 않는다. fragEnd >= 0 이면 [fragStart, fragEnd] 안의 가로선만.
+     */
+    private fun gridLines(sb: StringBuilder, g: TableGeom, extra: Int, fragStart: Int, fragEnd: Int, shift: Int) {
+        val rows = g.rows
+        val cols = g.colX.size - 1
+        if (rows <= 0 || cols <= 0) return
+        if (rows.toLong() * cols > 400_000L) {
+            // 비정상적으로 큰 격자: 셀마다 테두리 (느리지만 안전)
+            for (pc in g.cells) {
+                val bf = doc.borderFills[pc.cell.borderFillId] ?: continue
+                if (!css.hasBorder(bf)) continue
+                val y0 = g.y(pc)
+                if (fragEnd >= 0 && (y0 >= fragEnd || y0 + g.h(pc) <= fragStart)) continue
+                sb.append("<div class=\"td\" style=\"").box(g.x(pc), y0 - fragStart + shift, g.w(pc), g.h(pc)).append("\"><i class=\"bx k").append(pc.cell.borderFillId).append("\"></i></div>")
+            }
+            return
+        }
+        val owner = arrayOfNulls<TableGeom.PlacedCell>(rows * cols)
+        for (pc in g.cells) {
+            for (r in pc.row until minOf(rows, pc.row + pc.rowSpan)) for (c in pc.col until minOf(cols, pc.col + pc.colSpan)) {
+                if (owner[r * cols + c] == null) owner[r * cols + c] = pc
+            }
+        }
+        fun bf(pc: TableGeom.PlacedCell?) = pc?.let { doc.borderFills[it.cell.borderFillId] }
+        fun rowY(r: Int) = if (r >= rows) g.rowY[rows] + extra else g.rowY[r]
+        val visTop = if (fragEnd >= 0) fragStart else Int.MIN_VALUE
+        val visBottom = if (fragEnd >= 0) fragEnd else Int.MAX_VALUE
+
+        // 가로선
+        for (r in 0..rows) {
+            val y = rowY(r)
+            if (y < visTop || y > visBottom) continue
+            var runStart = 0
+            var runB: Border? = null
+            for (c in 0..cols) {
+                val b = if (c < cols) {
+                    val above = if (r > 0) owner[(r - 1) * cols + c] else null
+                    val below = if (r < rows) owner[r * cols + c] else null
+                    if (above != null && above === below) null else stronger(bf(above)?.bottom, bf(below)?.top)
+                } else null
+                if (b != runB) {
+                    if (runB != null) hLine(sb, g.colX[runStart], g.colX[c], y - fragStart + shift, runB)
+                    runStart = c
+                    runB = b
+                }
+            }
+        }
+        // 세로선 (행 단위로 끊어 같은 선은 합침)
+        for (c in 0..cols) {
+            val x = g.colX[c]
+            var runStart = 0
+            var runB: Border? = null
+            for (r in 0..rows) {
+                val b = if (r < rows) {
+                    val left = if (c > 0) owner[r * cols + c - 1] else null
+                    val right = if (c < cols) owner[r * cols + c] else null
+                    if (left != null && left === right) null else stronger(bf(left)?.right, bf(right)?.left)
+                } else null
+                if (b != runB) {
+                    if (runB != null) {
+                        val y0 = maxOf(rowY(runStart), visTop)
+                        val y1 = minOf(rowY(r), visBottom)
+                        if (y1 > y0) vLine(sb, x, y0 - fragStart + shift, y1 - fragStart + shift, runB)
+                    }
+                    runStart = r
+                    runB = b
+                }
+            }
+        }
+    }
+
+    /** 두 테두리 중 더 눈에 띄는 것 (없음 < 있음, 가는 < 굵은) */
+    private fun stronger(a: Border?, b: Border?): Border? {
+        val av = a?.takeIf { it.visible }
+        val bv = b?.takeIf { it.visible }
+        if (av == null) return bv
+        if (bv == null) return av
+        return if (bv.widthMm > av.widthMm) bv else av
+    }
+
+    private fun hLine(sb: StringBuilder, x0: Int, x1: Int, y: Int, b: Border) {
+        val w = lineWidth(b)
+        sb.append("<i class=\"gl\" style=\"left:").pxd(Html.px(x0) - w / 2).append(";top:").pxd(Html.px(y) - w / 2)
+            .append(";width:").pxd(Html.px(x1 - x0) + w).append(";border-top:").append(css.borderValue(b)).append("\"></i>")
+    }
+
+    private fun vLine(sb: StringBuilder, x: Int, y0: Int, y1: Int, b: Border) {
+        val w = lineWidth(b)
+        sb.append("<i class=\"gl\" style=\"left:").pxd(Html.px(x) - w / 2).append(";top:").pxd(Html.px(y0) - w / 2)
+            .append(";height:").pxd(Html.px(y1 - y0) + w).append(";border-left:").append(css.borderValue(b)).append("\"></i>")
+    }
+
+    private fun lineWidth(b: Border): Double {
+        val w = Css.bwPx(b)
+        return if (Css.borderStyle(b.type) == "double") w.coerceAtLeast(3.0) else w
     }
 
     private fun diagonals(sb: StringBuilder, bf: BorderFill, w: Int, h: Int) {
