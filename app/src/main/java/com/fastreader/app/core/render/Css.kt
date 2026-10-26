@@ -43,10 +43,11 @@ internal class Css(private val doc: RichDocument, private val mode: ViewMode, pr
         if (sp != 0) letterSpacing(sb, sp)
         if (cs.bold || heavyFont(cs.fontName(Lang.HANGUL))) sb.append("font-weight:700;")
         if (cs.italic) sb.append("font-style:italic;")
-        val color = textColor(cs.textColor)
-        if (color != null) sb.append("color:").append(color).append(';')
-        decorations(sb, cs)
         val shade = cs.shadeColor ?: doc.borderFills[cs.borderFillId]?.fillColor
+        val color = textColor(cs.textColor)
+        val onDarkOnly = needsDarkBackground(cs, shade)
+        if (color != null && !onDarkOnly) sb.append("color:").append(color).append(';')
+        decorations(sb, cs)
         if (shade != null) sb.append("background-color:").append(bgColor(shade)).append(';')
         val off = cs.offset(Lang.HANGUL)
         when {
@@ -74,6 +75,8 @@ internal class Css(private val doc: RichDocument, private val mode: ViewMode, pr
             sb.append("-webkit-text-emphasis:").append(mark).append(";text-emphasis:").append(mark).append(';')
         }
         sb.append("}\n")
+        // 흰 글자는 어두운 칸 안에서만 원래 색 (그 밖에서는 기본 글자색)
+        if (onDarkOnly && color != null) sb.append(".dkb .c").append(id).append("{color:").append(color).append("}\n")
 
         // 언어별로 크기/자간/위치가 다르면 언어 클래스를 따로
         if (!uniformLangs(cs)) {
@@ -208,6 +211,23 @@ internal class Css(private val doc: RichDocument, private val mode: ViewMode, pr
     }
 
     fun hasBorder(bf: BorderFill) = bf.left.visible || bf.right.visible || bf.top.visible || bf.bottom.visible
+
+    /**
+     * 읽기 모드(밝은 테마)에서 흰색에 가까운 글자: 원본에서는 쪽 배경(읽기 모드에서는 그리지 않음)이나 어두운 칸 위에
+     * 있던 글자라 흰 바탕에서는 보이지 않는다. 이런 글자는 어두운 바탕(.dkb) 안에서만 원래 색을 쓴다.
+     */
+    private fun needsDarkBackground(cs: CharShape, shade: Int?): Boolean =
+        mode == ViewMode.FLOW && !dark && luminance(cs.textColor) > 0.8 && (shade == null || luminance(shade) > 0.35)
+
+    /** 배경이 어두운 칸/문단인지 (읽기 모드에서 흰 글자를 원래 색으로 둘지 판단). 그림 배경은 어둡다고 본다 */
+    fun darkFill(bf: BorderFill): Boolean {
+        val g = bf.gradient
+        if (g != null && g.colors.size >= 2) return g.colors.sumOf { luminance(it) } / g.colors.size < 0.35
+        val img = bf.imageFillId?.let { doc.images[it] }
+        if (img != null && img.displayable) return true
+        val fill = bf.fillColor ?: return false
+        return luminance(fill) < 0.35
+    }
 
     /** 네 변 테두리를 인라인 style 선언으로 (읽기 모드 표 셀/문단/글상자용) */
     fun borderDecl(sb: StringBuilder, bf: BorderFill) {

@@ -112,6 +112,25 @@ class HtmlRendererTest {
     }
 
     @Test
+    fun whiteTextStaysReadableInReadingMode() {
+        val base = doc("흰 글자")
+        val white = CharShape.DEFAULT.copy(textColor = 0xFFFFFF)
+        val para = base.sections[0].paragraphs[0]
+        val d = RichDocument(
+            charShapes = mapOf(0 to white), paraShapes = base.paraShapes, borderFills = emptyMap(),
+            numberings = emptyMap(), bullets = emptyMap(), styles = emptyMap(),
+            sections = listOf(Section(PageDef(), paragraphs = listOf(para))), images = emptyMap(),
+        )
+        val r = HtmlRenderer(d)
+        // 밝은 읽기 모드: 기본 글자색, 어두운 칸 안에서만 흰색
+        val flow = r.shellHtml(ViewMode.FLOW)
+        assertTrue(flow.contains(".dkb .c0{color:#ffffff}"))
+        assertFalse(Regex("(?<!dkb )\\.c0\\{[^}]*color:#ffffff").containsMatchIn(flow))
+        // 원본 보기는 원래 색 그대로
+        assertTrue(Regex("\\.c0\\{[^}]*color:#ffffff").containsMatchIn(r.shellHtml(ViewMode.PAGE)))
+    }
+
+    @Test
     fun pageNumbersAndKeysAreConsistent() {
         val r = HtmlRenderer(parse("distribution.hwp"))
         val shell = r.shellHtml(ViewMode.PAGE)

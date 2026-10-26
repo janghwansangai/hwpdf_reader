@@ -93,6 +93,7 @@ internal class FlowWriter(private val ctx: Ctx, private val pageUnits: Boolean, 
         if (!pageUnits) sb.append(" q").append(p.paraShapeId)
         if (empty) sb.append(" e")
         if (bf != null && css.background(bf) != null) sb.append(" g").append(ps.borderFillId)
+        if (bf != null && css.darkFill(bf)) sb.append(" dkb")
         // 테두리는 쉘 CSS 의 .k{id} (어두운 테마 색 반영)
         if (bf != null && css.hasBorder(bf)) sb.append(" pbx k").append(ps.borderFillId)
         sb.append('"')
@@ -237,7 +238,7 @@ internal class FlowWriter(private val ctx: Ctx, private val pageUnits: Boolean, 
                 for (c in s.children) if (hasText(c)) inlineObject(sb, Inline.Object(0, -1, c), depth + 1)
             }
             s.paragraphs.isNotEmpty() -> {
-                sb.append("<div class=\"tbx\" style=\"")
+                sb.append("<div class=\"tbx").append(if (s.fill?.let { css.darkFill(it) } == true) " dkb" else "").append("\" style=\"")
                 if (s.line.visible) sb.append("border:").append(css.borderValue(s.line)).append(';')
                 s.fill?.let { css.background(it) }?.let { sb.append(it) }
                 if (pageUnits) sb.append("width:").px(s.layout.width.coerceIn(0, 2_000_000)).append(';')
@@ -263,6 +264,7 @@ internal class FlowWriter(private val ctx: Ctx, private val pageUnits: Boolean, 
         sb.append("<div class=\"tw\"><table class=\"tb")
         val tbf = t.borderFillId.takeIf { it != 0 }?.let { doc.borderFills[it] }
         if (tbf != null && css.background(tbf) != null) sb.append(" g").append(t.borderFillId)
+        if (tbf != null && css.darkFill(tbf)) sb.append(" dkb")
         sb.append("\" style=\"")
         if (pageUnits) sb.append("width:").px(totalW).append(';')
         else {
@@ -299,14 +301,11 @@ internal class FlowWriter(private val ctx: Ctx, private val pageUnits: Boolean, 
         if (pc.colSpan > 1) sb.append(" colspan=\"").append(pc.colSpan).append('"')
         if (pc.rowSpan > 1) sb.append(" rowspan=\"").append(pc.rowSpan).append('"')
         if (bf != null) {
-            val bg = css.background(bf) != null
-            val bd = css.hasBorder(bf)
-            if (bg || bd) {
-                sb.append(" class=\"")
-                if (bg) sb.append('g').append(c.borderFillId)
-                if (bd) sb.append(if (bg) " k" else "k").append(c.borderFillId)
-                sb.append('"')
-            }
+            val cls = ArrayList<String>(3)
+            if (css.background(bf) != null) cls.add("g" + c.borderFillId)
+            if (css.hasBorder(bf)) cls.add("k" + c.borderFillId)
+            if (css.darkFill(bf)) cls.add("dkb")
+            if (cls.isNotEmpty()) sb.append(" class=\"").append(cls.joinToString(" ")).append('"')
         }
         sb.append(" style=\"vertical-align:").append(
             when (c.vertAlign) {
