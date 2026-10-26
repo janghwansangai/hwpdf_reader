@@ -302,6 +302,9 @@ class ViewerActivity : AppCompatActivity() {
         richTotal = maxOf(1, state.renderer.pageCount)
         richProgress = 0f
         lastRichState = null
+        // 새로 연 문서(같은 문서를 다시 연 경우 포함)는 저장된 위치에서 시작
+        richRestoredUri = null
+        pendingRestore = null
         val view = richView ?: RichDocView(b.richContainer, richListener).also { richView = it }
         view.load(state.renderer, state.images, currentRichMode(), richOptions())
         configureRichBar()

@@ -300,7 +300,15 @@ mark.hit.cur{background:rgba(255,152,0,.95)}
     }
 
     fit();
-    window.addEventListener('resize', function () { fit(); onScroll(); });
+    // 화면 회전 등으로 폭이 바뀌면 배율이 달라지므로 보던 쪽과 쪽 안 위치를 유지한다
+    window.addEventListener('resize', function () {
+      var c = current(), r = pages[c].getBoundingClientRect();
+      var off = r.height > 0 ? -r.top / r.height : 0;
+      fit();
+      var r2 = pages[c].getBoundingClientRect();
+      window.scrollTo(0, window.scrollY + r2.top + off * r2.height);
+      onScroll();
+    });
     for (var k = 0; k < pages.length; k++) if (pages[k].firstChild) load(k);
     var io = new IntersectionObserver(function (es) {
       for (var q = 0; q < es.length; q++) if (es[q].isIntersecting) load(+es[q].target.getAttribute('data-i'));
