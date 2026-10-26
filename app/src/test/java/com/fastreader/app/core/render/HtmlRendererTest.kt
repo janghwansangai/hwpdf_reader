@@ -47,6 +47,8 @@ class HtmlRendererTest {
             val page = r.shellHtml(ViewMode.PAGE)
             val flow = r.shellHtml(ViewMode.FLOW, RenderOptions(darkMode = true))
             assertTrue(page.contains("data-mode=\"page\"") && page.contains("window.FR = {"))
+            // 원본 보기의 가운데/오른쪽 정렬 줄
+            assertTrue(page.contains(".l.ac{text-align:center}") && page.contains(".l.ar{text-align:right}"))
             assertTrue(flow.contains("data-mode=\"flow\"") && flow.contains("class=\"dk\""))
             for (i in 0 until r.pageCount) assertFalse(r.pageHtml(i).contains("err\""))
             for (i in 0 until r.flowChunkCount) assertTrue(r.flowChunkHtml(i).isNotEmpty())
@@ -101,6 +103,9 @@ class HtmlRendererTest {
         val h = sb.toString()
         assertTrue(h.contains("class=\"ef\""))
         assertTrue(h.contains("×") && h.contains("√") && h.contains("α") && h.contains("<sup>"))
+        val ab = StringBuilder()
+        EquationHtml.write(ab, "(a+b)^2 = a^2 + 2ab + b^2")
+        assertEquals("(<i>a</i>+<i>b</i>)<sup>2</sup>=<i>a</i><sup>2</sup>+2<i>ab</i>+<i>b</i><sup>2</sup>", ab.toString())
         val bad = StringBuilder()
         EquationHtml.write(bad, "{{{{ <b> over")
         assertFalse(bad.toString().contains("<b>"))

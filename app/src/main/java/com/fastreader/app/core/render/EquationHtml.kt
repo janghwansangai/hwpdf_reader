@@ -184,7 +184,7 @@ internal object EquationHtml {
                     }
                     return Group(open, body, close)
                 }
-                "rm", "it", "bold", "b", "rmbold" -> return atom(depth)
+                "rm", "it", "bold", "rmbold" -> return atom(depth)
                 "matrix", "pmatrix", "bmatrix", "dmatrix", "cases", "pile", "lpile", "rpile", "eqalign" -> {
                     val body = atom(depth + 1) ?: Lit("")
                     return when (lower) {

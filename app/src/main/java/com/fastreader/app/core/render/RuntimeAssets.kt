@@ -16,6 +16,7 @@ body.dk{background:#2b2c2f}
 .pg{position:relative;margin:0 auto 10px;background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.28);overflow:hidden}
 .bd,.l,.ob,.td,.fb,.hf,.pn,.cp,.oi,.pb,.nr,.fn,.pbg{position:absolute}
 .l{white-space:pre;line-height:0;transform-origin:0 0;overflow:visible}
+.l.ac{text-align:center}.l.ar{text-align:right}
 .s{display:inline-block;width:0;vertical-align:baseline}
 .w{display:inline-block;width:0;overflow:hidden;vertical-align:baseline}
 .n{display:none}
@@ -88,6 +89,7 @@ body.dk a.lk{color:#8ab4f8}
 .ef{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;font-size:.9em;margin:0 .1em;line-height:1.15}
 .en{border-bottom:1px solid currentColor;padding:0 .15em}.ed{padding:0 .15em}
 .eo{border-top:1px solid currentColor;padding-top:.05em}.ei{font-size:.6em;margin-right:-.3em}
+.eq sup:not(.ei),.eqf sup:not(.ei){font-size:.7em;vertical-align:.5em;line-height:0}.eq sub,.eqf sub{font-size:.7em;vertical-align:-.3em;line-height:0}
 mark.hit{background:rgba(255,213,79,.8);color:inherit;border-radius:2px}
 mark.hit.cur{background:rgba(255,152,0,.95)}
 """

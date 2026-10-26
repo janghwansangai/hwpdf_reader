@@ -239,7 +239,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         val paraTop = p.lines.firstOrNull()?.vertPos ?: 0
         val x = ox + alignX(l.horzAlign, 0, areaW, w, l.horzOffset) + (if (l.horzAlign == ObjAlign.START) l.outMargin.left else 0)
         val y = oy + (if (l.vertRelTo == VertRel.PARA) paraTop + l.vertOffset + l.outMargin.top else l.vertOffset)
-        objectAt(sb, o, x, y, w, h, depth, zIndex(l))
+        objectAt(sb, o, x, y, w, h, depth, zIndex(l, inArea = true))
     }
 
     // ------------------------------------------------------------------ 떠 있는 개체 (쪽)
@@ -286,7 +286,15 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         objectAt(sb, o, x, y, w, h, 0, zIndex(l))
     }
 
-    private fun zIndex(l: com.fastreader.app.core.doc.ObjectLayout) = if (l.textWrap == TextWrap.BEHIND_TEXT) 0 else 2
+    /**
+     * 글 뒤로: 0, 글 앞으로: 글자 위 (본문에서는 표 선 .gl 보다도 위, 셀/글상자 안에서는 그 칸의 선 아래 = 1),
+     * 그 밖: 2 = 지정 안 함 (문서 순서대로)
+     */
+    private fun zIndex(l: com.fastreader.app.core.doc.ObjectLayout, inArea: Boolean = false) = when (l.textWrap) {
+        TextWrap.BEHIND_TEXT -> 0
+        TextWrap.IN_FRONT_OF_TEXT -> if (inArea) 1 else 3
+        else -> 2
+    }
 
     private fun alignX(a: ObjAlign, base: Int, size: Int, w: Int, off: Int): Int = when (a) {
         ObjAlign.START, ObjAlign.INSIDE -> base + off
@@ -361,7 +369,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             is Table -> tableCells(sb, o, depth, 0, -1, 0, bh)
             is Picture -> picture(sb, o, bw, bh)
             is Shape -> shape(sb, o, bw, bh, depth)
-            is Equation -> equation(sb, o, bh)
+            is Equation -> equation(sb, o)
         }
         if (ox != 0 || oy != 0) sb.append("</div>")
         if (cap != null) {
@@ -700,14 +708,14 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         if (dash != null) sb.append(" stroke-dasharray=\"").append(dash).append('"')
     }
 
-    private fun equation(sb: StringBuilder, e: Equation, h: Int) {
+    private fun equation(sb: StringBuilder, e: Equation) {
         val size = (e.baseSize.coerceIn(100, 40000) / 100.0) * 96.0 / 72.0
         sb.append("<div class=\"eq\" style=\"font-size:").pxd(size)
         if (e.color != 0) sb.append(";color:").append(Html.color(e.color))
-        sb.append("\">")
+        // flex 컨테이너의 직접 자식이면 위/아래 첨자의 vertical-align 이 무시되므로 한 번 감싼다
+        sb.append("\"><span>")
         EquationHtml.write(sb, e.script)
-        sb.append("</div>")
-        if (h < 0) sb.append("")
+        sb.append("</span></div>")
     }
 
     // ------------------------------------------------------------------ 문단 테두리/배경
