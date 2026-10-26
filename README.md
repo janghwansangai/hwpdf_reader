@@ -25,8 +25,16 @@ WMF/EMF 같은 일부 그림 형식은 자리 표시로 나옵니다. 열 수 �
 ## 빌드
 
 GitHub에 push하면 Actions가 테스트 후 APK를 만듭니다.
-Actions 실행 결과의 **Artifacts → FastDocReader-apk** 에서 내려받아 휴대폰에 설치하세요.
-`app-release.apk`(용량이 작고 빠름)를 권장합니다.
+
+**설치용 APK는 GitHub의 Releases에서 받으세요.** `v`로 시작하는 태그(예: `v1.2`)를 올리면
+Actions가 그 버전의 Release를 만들고 `FastDocReader-v1.2.apk`를 붙입니다.
+
+```bash
+git tag v1.2
+git push origin v1.2
+```
+
+평소 push한 빌드는 Actions 실행 결과의 **Artifacts → FastDocReader-apk** 에서 30일 동안 받을 수 있습니다.
 
 로컬 빌드:
 
