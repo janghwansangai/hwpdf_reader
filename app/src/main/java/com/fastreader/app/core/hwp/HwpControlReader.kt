@@ -358,10 +358,13 @@ internal class HwpControlReader(private val t: HwpRecordTree, private val sec: H
                 imgH = r.s32()
             }
         }
+        // 자르기 영역이 원본 전체면 자르지 않음(0) — HWPX 파서와 같은 규칙
+        val full = cropL <= 0 && cropT <= 0 && (imgW <= 0 || cropR >= imgW) && (imgH <= 0 || cropB >= imgH)
         return Picture(
             layout = layout, caption = caption,
             imageId = if (sec.hasBinItem(binId)) "bin$binId" else null,
-            cropLeft = cropL, cropTop = cropT, cropRight = cropR, cropBottom = cropB,
+            cropLeft = if (full) 0 else cropL, cropTop = if (full) 0 else cropT,
+            cropRight = if (full) 0 else cropR, cropBottom = if (full) 0 else cropB,
             imageWidth = imgW.coerceAtLeast(0), imageHeight = imgH.coerceAtLeast(0),
             border = border(bProp and 0x3F, bThick, bColor),
             effect = effect.coerceAtMost(3), brightness = brightness, contrast = contrast, inMargin = inMargin,

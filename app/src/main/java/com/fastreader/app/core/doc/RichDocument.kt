@@ -445,7 +445,10 @@ class Picture(
     override val caption: Caption? = null,
     /** [RichDocument.images] 의 키. 없으면 null (빈 상자로 표시) */
     val imageId: String?,
-    /** 원본 이미지에서 잘라 쓰는 영역 (원본 이미지 기준 HWPUNIT, 0 이면 자르지 않음) */
+    /**
+     * 원본 이미지에서 남겨 쓰는 영역의 좌표 (왼쪽, 위, 오른쪽, 아래; 원본 이미지 크기 [imageWidth]x[imageHeight] 기준 HWPUNIT).
+     * 넷 다 0 이면 자르지 않는다.
+     */
     val cropLeft: Int = 0,
     val cropTop: Int = 0,
     val cropRight: Int = 0,

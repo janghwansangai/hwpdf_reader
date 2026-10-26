@@ -36,13 +36,17 @@ internal object HwpxValues {
         return minOf(v, 50f)
     }
 
-    /** 테두리/선 종류 이름 (hwpxlib LineType2/LineType3 + HWP 의 3D/물결 선) */
-    fun lineType(s: String?, def: LineType = LineType.NONE): LineType = when (s?.trim()?.uppercase()) {
+    /**
+     * 테두리/선 종류 이름 (hwpxlib LineType2/LineType3 + HWP 의 3D/물결 선) → 화면에 그려지는 모양.
+     * 테두리·도형 선(LineType2)은 한글이 파선을 "DOT", 점선을 "DASH" 로 적는다(한글 미리보기 그림으로 확인,
+     * hwp2hwpx ValueConvertor 의 "hwpx 포맷 오류" 주석). 밑줄/취소선(LineType3)은 이름 그대로라 [stroke] = true 로 부른다.
+     */
+    fun lineType(s: String?, def: LineType = LineType.NONE, stroke: Boolean = false): LineType = when (s?.trim()?.uppercase()) {
         null, "" -> def
         "NONE" -> LineType.NONE
         "SOLID" -> LineType.SOLID
-        "DOT" -> LineType.DOT
-        "DASH" -> LineType.DASH
+        "DOT" -> if (stroke) LineType.DOT else LineType.DASH
+        "DASH" -> if (stroke) LineType.DASH else LineType.DOT
         "DASH_DOT" -> LineType.DASH_DOT
         "DASH_DOT_DOT" -> LineType.DASH_DOT_DOT
         "LONG_DASH" -> LineType.LONG_DASH
@@ -61,12 +65,12 @@ internal object HwpxValues {
         else -> def
     }
 
-    /** 탭의 leader 처럼 숫자로 적힌 선 종류 (hwpxlib LineType2.fromIndex 순서) */
+    /** 탭의 leader 처럼 숫자로 적힌 선 종류 (HWP 선 종류 값과 같다: 2 = 파선, 3 = 점선) */
     fun lineTypeIndex(i: Int): LineType = when (i) {
         0 -> LineType.NONE
         1 -> LineType.SOLID
-        2 -> LineType.DOT
-        3 -> LineType.DASH
+        2 -> LineType.DASH
+        3 -> LineType.DOT
         4 -> LineType.DASH_DOT
         5 -> LineType.DASH_DOT_DOT
         6 -> LineType.LONG_DASH

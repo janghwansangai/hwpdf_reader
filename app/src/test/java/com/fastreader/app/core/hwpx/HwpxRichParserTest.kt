@@ -257,7 +257,7 @@ class HwpxRichParserTest {
         val c = p.content
         // secPr 0..7, colPr 8..15
         assertEquals(Inline.Text(16, "가", 3), c[0])
-        assertEquals(Inline.Tab(17, 3, 1200, LineType.DASH), c[1])
+        assertEquals(Inline.Tab(17, 3, 1200, LineType.DOT), c[1]) // leader 3 = 점선 (HWP 선 종류 값과 같음)
         assertEquals(Inline.Text(25, "나", 3), c[2])
         assertEquals(Inline.LineBreak(26, 3), c[3])
         // 묶음빈칸/고정폭빈칸은 1칸 글자, 제목 표시는 8칸
@@ -459,7 +459,7 @@ class HwpxRichParserTest {
         assertEquals(0.4f, bf.left.widthMm, 0.0001f)
         assertEquals(0xFF0000, bf.left.color)
         assertFalse(bf.right.visible)
-        assertEquals(LineType.DASH, bf.bottom.type)
+        assertEquals(LineType.DOT, bf.bottom.type) // 테두리 "DASH" 는 한글이 점선으로 그린다
         assertEquals(0x0000FF, bf.diagonal!!.color)
         assertNull(bf.backDiagonal)
         assertEquals(0xE3DCC1, bf.fillColor)

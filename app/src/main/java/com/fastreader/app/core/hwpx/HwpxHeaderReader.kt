@@ -228,7 +228,7 @@ internal class HwpxHeaderReader {
                 "supscript", "superscript" -> r.sup = true
                 "subscript" -> r.sub = true
                 "underline" -> {
-                    val shape = HwpxValues.lineType(a["shape"], LineType.SOLID)
+                    val shape = HwpxValues.lineType(a["shape"], LineType.SOLID, stroke = true)
                     when (a["type"]?.trim()?.uppercase()) {
                         "BOTTOM" -> r.underline = UnderlinePos.BOTTOM
                         "TOP" -> r.underline = UnderlinePos.TOP
@@ -247,7 +247,7 @@ internal class HwpxHeaderReader {
                     val shape = a["shape"]?.trim()?.uppercase()
                     if (shape != null && shape != "NONE" && shape != "3D" && shape.isNotEmpty()) {
                         r.strike = true
-                        r.strikeStyle = HwpxValues.lineType(shape, LineType.SOLID)
+                        r.strikeStyle = HwpxValues.lineType(shape, LineType.SOLID, stroke = true)
                         r.strikeColor = HwpxValues.color(a["color"])
                     }
                 }
