@@ -12,6 +12,12 @@ import com.fastreader.app.core.FileChannelSource
 import com.fastreader.app.core.HwpParser
 import com.fastreader.app.core.HwpxParser
 import com.fastreader.app.core.TextDocument
+import com.fastreader.app.core.EncryptedDocumentException
+import com.fastreader.app.core.UnsupportedDocumentException
+import com.fastreader.app.core.doc.RichDocument
+import com.fastreader.app.core.hwp.HwpRichParser
+import com.fastreader.app.core.hwpx.HwpxRichParser
+import com.fastreader.app.core.render.HtmlRenderer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +33,15 @@ sealed interface ViewerState {
     data object Loading : ViewerState
     class Pdf(val info: DocumentInfo, val pdf: PdfController) : ViewerState
     class Text(val info: DocumentInfo, val type: DocumentType, val doc: TextDocument) : ViewerState
+
+    /** 한글 문서 원본 모양 보기 (WebView) */
+    class Rich(
+        val info: DocumentInfo,
+        val type: DocumentType,
+        val renderer: HtmlRenderer,
+        val images: DocImageCache,
+        val notice: String?,
+    ) : ViewerState
     class Failed(val info: DocumentInfo?, val message: String) : ViewerState
 }
 
@@ -58,7 +73,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
                 ViewerState.Failed(null, messageFor(e))
             }
             if (!isActive || currentUri != uri) {
-                (result as? ViewerState.Pdf)?.pdf?.close()
+                release(result)
                 return@launch
             }
             _state.value = result
@@ -73,18 +88,24 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
             if (head.isEmpty()) return ViewerState.Failed(info, "빈 파일입니다.")
             when (val type = DocumentTypeDetector.detect(head, info.displayName, info.mimeType)) {
                 DocumentType.PDF -> ViewerState.Pdf(info, PdfController.open(DocumentOpener.openSeekable(ctx, uri)))
-                DocumentType.HWP -> {
+                DocumentType.HWP -> rich(info, type) { images ->
+                    DocumentOpener.openSeekable(ctx, uri).use { f ->
+                        // FileInputStream 의 채널은 소유하지 않는다 – pfd 는 SeekableFile 이 닫는다.
+                        HwpRichParser.parse(FileChannelSource(FileInputStream(f.pfd.fileDescriptor).channel), images.sink)
+                    }
+                } ?: run {
                     val file = DocumentOpener.openSeekable(ctx, uri)
                     val doc = file.use { f ->
-                        // FileInputStream 의 채널은 소유하지 않는다 – pfd 는 SeekableFile 이 닫는다.
                         val channel = FileInputStream(f.pfd.fileDescriptor).channel
                         HwpParser.parse(FileChannelSource(channel))
                     }
-                    ViewerState.Text(info, type, doc)
+                    ViewerState.Text(info, type, doc.withFallbackNotice())
                 }
-                DocumentType.HWPX -> {
+                DocumentType.HWPX -> rich(info, type) { images ->
+                    DocumentOpener.openInput(ctx, uri).use { HwpxRichParser.parse(it.buffered(), images.sink) }
+                } ?: run {
                     val doc = DocumentOpener.openInput(ctx, uri).use { HwpxParser.parse(it) }
-                    ViewerState.Text(info, type, doc)
+                    ViewerState.Text(info, type, doc.withFallbackNotice())
                 }
                 DocumentType.UNKNOWN -> ViewerState.Failed(
                     info,
@@ -99,6 +120,38 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 원본 모양 파서 + 렌더러. 암호/미지원 문서는 그대로 오류로 알리고, 그 밖의 실패는 null 을 돌려
+     * 기존 텍스트 보기로 대체한다 (원본을 못 그려도 내용은 보이게).
+     */
+    private fun rich(info: DocumentInfo, type: DocumentType, parse: (DocImageCache) -> RichDocument): ViewerState? {
+        val images = DocImageCache.create(getApplication())
+        return try {
+            val doc = parse(images)
+            val renderer = HtmlRenderer(doc)
+            // 쪽 나누기/덩어리 계산을 미리 해 둬서 화면 전환 때 기다리지 않게
+            renderer.pageCount
+            renderer.flowChunkCount
+            ViewerState.Rich(info, type, renderer, images, doc.notice)
+        } catch (e: CancellationException) {
+            images.delete()
+            throw e
+        } catch (e: EncryptedDocumentException) {
+            images.delete()
+            throw e
+        } catch (e: UnsupportedDocumentException) {
+            images.delete()
+            throw e
+        } catch (e: Throwable) {
+            images.delete()
+            Log.w(TAG, "rich view failed, falling back to text: ${info.displayName}", e)
+            null
+        }
+    }
+
+    private fun TextDocument.withFallbackNotice(): TextDocument =
+        TextDocument(blocks, listOfNotNull("원본 모양을 그리지 못해 텍스트만 표시합니다.", notice).joinToString("\n"))
+
     private fun messageFor(e: Throwable): String = when (e) {
         is DocumentException -> e.message ?: "문서를 열 수 없습니다."
         is OutOfMemoryError -> "문서가 너무 커서 메모리가 부족합니다.\n다른 앱을 종료한 뒤 다시 시도해 주세요."
@@ -109,7 +162,19 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun releaseCurrent() {
-        (_state.value as? ViewerState.Pdf)?.pdf?.close()
+        release(_state.value)
+    }
+
+    private fun release(state: ViewerState) {
+        when (state) {
+            is ViewerState.Pdf -> state.pdf.close()
+            is ViewerState.Rich -> state.images.delete()
+            else -> {}
+        }
+    }
+
+    init {
+        DocImageCache.cleanStale(app)
     }
 
     fun trimMemory() {

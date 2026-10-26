@@ -39,7 +39,7 @@ class RecentDocuments(context: Context) {
 
     fun remove(uri: Uri) {
         save(list().filterNot { it.uri == uri })
-        prefs.edit().remove(posKey(uri)).apply()
+        prefs.edit().remove(posKey(uri)).remove(stateKey(uri)).apply()
     }
 
     fun clear() {
@@ -57,6 +57,14 @@ class RecentDocuments(context: Context) {
         return index to (parts.getOrNull(1)?.toIntOrNull() ?: 0)
     }
 
+    /** 한글 문서 보기 위치 (WebView 의 FR.state() JSON) */
+    fun saveState(uri: Uri, json: String) {
+        if (json.length > 2000) return
+        prefs.edit().putString(stateKey(uri), json).apply()
+    }
+
+    fun state(uri: Uri): String? = prefs.getString(stateKey(uri), null)
+
     private fun save(items: List<RecentDocument>) {
         val arr = JSONArray()
         items.forEach {
@@ -72,6 +80,7 @@ class RecentDocuments(context: Context) {
     }
 
     private fun posKey(uri: Uri) = "pos:" + uri.toString().hashCode()
+    private fun stateKey(uri: Uri) = "state:" + uri.toString().hashCode()
 
     companion object {
         private const val KEY_LIST = "list"
@@ -89,4 +98,14 @@ class ViewerPrefs(context: Context) {
     var pdfNightMode: Boolean
         get() = prefs.getBoolean("pdfNight", false)
         set(v) = prefs.edit().putBoolean("pdfNight", v).apply()
+
+    /** 한글 문서 보기 방식: true 읽기 모드, false 원본 보기 (기본) */
+    var richReadingMode: Boolean
+        get() = prefs.getBoolean("richReading", false)
+        set(v) = prefs.edit().putBoolean("richReading", v).apply()
+
+    /** 읽기 모드 글자 배율 (1.0 = 기본) */
+    var readingTextScale: Float
+        get() = prefs.getFloat("readingScale", 1f).coerceIn(0.6f, 3f)
+        set(v) = prefs.edit().putFloat("readingScale", v.coerceIn(0.6f, 3f)).apply()
 }

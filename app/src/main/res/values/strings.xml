@@ -43,4 +43,11 @@
     <string name="page_input_hint">1 ~ %d</string>
     <string name="search_count">%1$d / %2$d</string>
     <string name="search_count_more">%1$d / %2$d+</string>
+    <string name="view_original">원본</string>
+    <string name="view_reading">읽기</string>
+    <string name="open_link_title">링크 열기</string>
+    <string name="open_link_message">다음 주소를 다른 앱에서 엽니다.\n%s</string>
+    <string name="open">열기</string>
+    <string name="reading_text_size">읽기 모드 글자 크기</string>
+    <string name="search_unavailable">PDF 는 본문 검색을 지원하지 않습니다.</string>
 </resources>

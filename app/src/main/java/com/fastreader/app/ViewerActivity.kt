@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentCallbacks2
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -39,11 +40,16 @@ import com.fastreader.app.databinding.ActivityViewerBinding
 import com.fastreader.app.databinding.DialogSliderBinding
 import com.fastreader.app.viewer.DocumentInfo
 import com.fastreader.app.viewer.PdfPageAdapter
+import com.fastreader.app.viewer.RichDocView
 import com.fastreader.app.viewer.SearchMatch
 import com.fastreader.app.viewer.TextBlockAdapter
 import com.fastreader.app.viewer.ViewerState
 import com.fastreader.app.viewer.ViewerViewModel
+import com.fastreader.app.core.render.RenderOptions
+import com.fastreader.app.core.render.SearchHit
+import com.fastreader.app.core.render.ViewMode
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -66,6 +72,54 @@ class ViewerActivity : AppCompatActivity() {
     private var matches: List<SearchMatch> = emptyList()
     private var matchIndex = -1
     private var searchJob: Job? = null
+
+    // ---- 한글 문서 원본 보기/읽기 모드
+    private var richView: RichDocView? = null
+    private var richHits: List<SearchHit> = emptyList()
+    private var richPage = 0
+    private var richTotal = 1
+    private var richProgress = 0f
+    private var richRestoredUri: Uri? = null
+    private var lastRichState: String? = null
+
+    /** 보기 전환 뒤 복원할 위치 */
+    private var pendingRestore: String? = null
+
+    private val richListener = object : RichDocView.Listener {
+        override fun onReady(mode: String) {
+            val st = shownState as? ViewerState.Rich ?: return
+            val view = richView ?: return
+            val pending = pendingRestore
+            when {
+                pending != null -> {
+                    pendingRestore = null
+                    view.restore(pending)
+                }
+                richRestoredUri != st.info.uri -> {
+                    richRestoredUri = st.info.uri
+                    recents.state(st.info.uri)?.let { view.restore(it) }
+                }
+                // WebView 프로세스가 다시 시작된 경우 마지막 위치로
+                else -> lastRichState?.let { view.restore(it) }
+            }
+        }
+
+        override fun onPosition(json: String) {
+            lastRichState = json
+            try {
+                val o = JSONObject(json)
+                richProgress = o.optDouble("progress", 0.0).toFloat()
+                if (o.optString("mode") == "page") {
+                    richPage = o.optInt("page", 0)
+                    richTotal = o.optInt("total", richTotal)
+                }
+            } catch (_: Exception) {
+            }
+            updateRichProgress()
+        }
+
+        override fun onLink(url: String) = confirmOpenLink(url)
+    }
 
     private val openDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -127,6 +181,18 @@ class ViewerActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         savePosition()
+        richView?.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        richView?.onResume()
+    }
+
+    override fun onDestroy() {
+        richView?.destroy()
+        richView = null
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")
@@ -144,11 +210,17 @@ class ViewerActivity : AppCompatActivity() {
         b.errorView.isVisible = state is ViewerState.Failed
         b.pdfList.isVisible = state is ViewerState.Pdf
         b.textList.isVisible = state is ViewerState.Text
-        b.bottomBar.isVisible = state is ViewerState.Pdf || state is ViewerState.Text
+        b.richContainer.isVisible = state is ViewerState.Rich
+        b.bottomBar.isVisible = state is ViewerState.Pdf || state is ViewerState.Text || state is ViewerState.Rich
         b.readProgress.isVisible = b.bottomBar.isVisible
         b.notice.isVisible = false
         closeSearch()
         invalidateOptionsMenu()
+        if (state !is ViewerState.Rich) {
+            // 다른 문서/형식으로 바뀌면 WebView 를 정리해 메모리를 돌려준다
+            richView?.destroy()
+            richView = null
+        }
 
         when (state) {
             ViewerState.Loading -> {
@@ -164,6 +236,7 @@ class ViewerActivity : AppCompatActivity() {
             }
             is ViewerState.Pdf -> showPdf(state)
             is ViewerState.Text -> showText(state)
+            is ViewerState.Rich -> showRich(state)
         }
     }
 
@@ -216,9 +289,157 @@ class ViewerActivity : AppCompatActivity() {
         updateProgress()
     }
 
+    private fun showRich(state: ViewerState.Rich) {
+        b.toolbar.title = state.info.displayName
+        addToRecents(state.info, if (state.type == DocumentType.HWPX) "HWPX" else "HWP")
+        pdfAdapter = null
+        textAdapter = null
+        b.pdfList.adapter = null
+        b.textList.adapter = null
+        b.notice.isVisible = state.notice != null
+        b.notice.text = state.notice
+        richPage = 0
+        richTotal = maxOf(1, state.renderer.pageCount)
+        richProgress = 0f
+        lastRichState = null
+        val view = richView ?: RichDocView(b.richContainer, richListener).also { richView = it }
+        view.load(state.renderer, state.images, currentRichMode(), richOptions())
+        configureRichBar()
+    }
+
+    private fun currentRichMode() = if (prefs.richReadingMode) ViewMode.FLOW else ViewMode.PAGE
+
+    private fun richOptions() = RenderOptions(darkMode = isNightMode(), textScale = prefs.readingTextScale)
+
+    private fun isNightMode() =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    /** 한글 문서 하단 막대: 검색 · 보기 전환 · (읽기 모드) 글자 · 쪽/위치 · 공유 */
+    private fun configureRichBar() {
+        val reading = prefs.richReadingMode
+        b.btnFirst.setIconResource(R.drawable.ic_search)
+        b.btnFirst.setText(R.string.search)
+        b.btnFirst.setOnClickListener { if (b.searchBar.isVisible) closeSearch() else openSearch() }
+        // 버튼에는 바꿀 보기 이름을 쓴다
+        b.btnSecond.setIconResource(if (reading) R.drawable.ic_view_page else R.drawable.ic_pages)
+        b.btnSecond.setText(if (reading) R.string.view_original else R.string.view_reading)
+        b.btnSecond.setOnClickListener { toggleRichMode() }
+        b.btnText.isVisible = reading
+        b.btnText.setOnClickListener { showReadingScaleDialog() }
+        b.btnPage.setOnClickListener { showRichGoToDialog() }
+        b.btnShare.setOnClickListener { shareDocument() }
+        updateRichProgress()
+    }
+
+    private fun toggleRichMode() {
+        val st = shownState as? ViewerState.Rich ?: return
+        val view = richView ?: return
+        closeSearch()
+        view.requestState { json ->
+            if (shownState !== st || richView !== view) return@requestState
+            pendingRestore = json
+            prefs.richReadingMode = !prefs.richReadingMode
+            view.load(st.renderer, st.images, currentRichMode(), richOptions())
+            configureRichBar()
+        }
+    }
+
+    private fun updateRichProgress() {
+        if (shownState !is ViewerState.Rich) return
+        b.btnPage.text = if (prefs.richReadingMode) getString(R.string.percent_format, (richProgress * 100).roundToInt().coerceIn(0, 100))
+        else getString(R.string.page_format, richPage + 1, richTotal)
+        b.readProgress.setProgressCompat((richProgress * 1000).roundToInt().coerceIn(0, 1000), false)
+    }
+
+    private fun showRichGoToDialog() {
+        val st = shownState as? ViewerState.Rich ?: return
+        val view = richView ?: return
+        val d = DialogSliderBinding.inflate(layoutInflater)
+        val reading = prefs.richReadingMode
+        val count = st.renderer.pageCount
+        if (!reading) {
+            if (count <= 1) return
+            d.dialogSlider.valueFrom = 1f
+            d.dialogSlider.valueTo = count.toFloat()
+            d.dialogSlider.stepSize = 1f
+            d.dialogSlider.value = (richPage + 1).toFloat().coerceIn(1f, count.toFloat())
+            d.dialogInput.isVisible = true
+            d.dialogInput.hint = getString(R.string.page_input_hint, count)
+            d.dialogValue.text = getString(R.string.page_format, richPage + 1, count)
+            d.dialogSlider.addOnChangeListener { _, v, fromUser ->
+                d.dialogValue.text = getString(R.string.page_format, v.toInt(), count)
+                if (fromUser) d.dialogInput.setText("")
+            }
+        } else {
+            d.dialogSlider.valueFrom = 0f
+            d.dialogSlider.valueTo = 100f
+            d.dialogSlider.stepSize = 1f
+            d.dialogSlider.value = (richProgress * 100).roundToInt().toFloat().coerceIn(0f, 100f)
+            d.dialogValue.text = getString(R.string.percent_format, d.dialogSlider.value.toInt())
+            d.dialogSlider.addOnChangeListener { _, v, _ -> d.dialogValue.text = getString(R.string.percent_format, v.toInt()) }
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.go_to_page)
+            .setView(d.root)
+            .setPositiveButton(R.string.ok) { _, _ ->
+                if (!reading) {
+                    val typed = d.dialogInput.text.toString().toIntOrNull()
+                    view.goToPage(((typed ?: d.dialogSlider.value.toInt()) - 1).coerceIn(0, count - 1))
+                } else {
+                    view.goToProgress(d.dialogSlider.value / 100f)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun showReadingScaleDialog() {
+        val view = richView ?: return
+        val d = DialogSliderBinding.inflate(layoutInflater)
+        d.dialogSlider.valueFrom = 70f
+        d.dialogSlider.valueTo = 200f
+        d.dialogSlider.stepSize = 10f
+        val start = ((prefs.readingTextScale * 100 - 70) / 10).roundToInt().coerceIn(0, 13) * 10 + 70
+        d.dialogSlider.value = start.toFloat()
+        d.dialogValue.text = getString(R.string.percent_format, start)
+        d.dialogSlider.addOnChangeListener { _, v, _ ->
+            d.dialogValue.text = getString(R.string.percent_format, v.toInt())
+            view.setTextScale(v / 100f)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.reading_text_size)
+            .setView(d.root)
+            .setPositiveButton(R.string.ok) { _, _ -> prefs.readingTextScale = d.dialogSlider.value / 100f }
+            .setOnCancelListener { prefs.readingTextScale = d.dialogSlider.value / 100f }
+            .show()
+    }
+
+    private fun confirmOpenLink(url: String) {
+        val u = try {
+            Uri.parse(url)
+        } catch (e: Exception) {
+            return
+        }
+        val scheme = u.scheme?.lowercase() ?: return
+        if (scheme != "http" && scheme != "https" && scheme != "mailto") return
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.open_link_title)
+            .setMessage(getString(R.string.open_link_message, url.take(300)))
+            .setPositiveButton(R.string.open) { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, u))
+                } catch (e: ActivityNotFoundException) {
+                    Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
     // ---------------------------------------------------------------- 하단 도구 막대 (디자인 B안)
 
     private fun configureBottomBar(isPdf: Boolean) {
+        b.btnText.isVisible = false
         if (isPdf) {
             b.btnFirst.setIconResource(R.drawable.ic_zoom)
             b.btnFirst.setOnClickListener {
@@ -333,6 +554,10 @@ class ViewerActivity : AppCompatActivity() {
 
     private fun savePosition() {
         val uri = vm.currentUri ?: return
+        if (shownState is ViewerState.Rich) {
+            (lastRichState ?: richView?.lastPosition)?.let { recents.saveState(uri, it) }
+            return
+        }
         val list = when (shownState) {
             is ViewerState.Pdf -> b.pdfList
             is ViewerState.Text -> b.textList
@@ -375,7 +600,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun openSearch() {
-        if (textAdapter == null) return
+        if (textAdapter == null && shownState !is ViewerState.Rich) return
         b.searchBar.isVisible = true
         b.searchInput.requestFocus()
         getSystemService(InputMethodManager::class.java)?.showSoftInput(b.searchInput, InputMethodManager.SHOW_IMPLICIT)
@@ -390,10 +615,27 @@ class ViewerActivity : AppCompatActivity() {
         matches = emptyList()
         matchIndex = -1
         textAdapter?.setSearch("", null)
+        if (richHits.isNotEmpty()) richView?.clearHits()
+        richHits = emptyList()
     }
 
     private fun scheduleSearch(query: String) {
         searchJob?.cancel()
+        val rich = shownState as? ViewerState.Rich
+        if (rich != null) {
+            searchJob = lifecycleScope.launch {
+                delay(300)
+                val q = query.trim()
+                val hits = withContext(Dispatchers.Default) { rich.renderer.search(q, SEARCH_LIMIT) }
+                if (shownState !== rich) return@launch
+                richHits = hits
+                // 지금 보고 있는 쪽 이후의 첫 결과부터
+                matchIndex = if (hits.isEmpty()) -1 else hits.indexOfFirst { it.page >= richPage }.let { if (it < 0) 0 else it }
+                if (hits.isEmpty()) richView?.clearHits() else richView?.showHit(hits[matchIndex])
+                updateSearchCount(q)
+            }
+            return
+        }
         val adapter = textAdapter ?: return
         val state = shownState as? ViewerState.Text ?: return
         searchJob = lifecycleScope.launch {
@@ -411,6 +653,13 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun moveMatch(delta: Int) {
+        if (shownState is ViewerState.Rich) {
+            if (richHits.isEmpty()) return
+            matchIndex = (matchIndex + delta).mod(richHits.size)
+            richView?.showHit(richHits[matchIndex])
+            updateSearchCount(b.searchInput.text.toString().trim())
+            return
+        }
         if (matches.isEmpty()) return
         matchIndex = (matchIndex + delta).mod(matches.size)
         val m = matches[matchIndex]
@@ -420,11 +669,12 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun updateSearchCount(q: String) {
+        val total = if (shownState is ViewerState.Rich) richHits.size else matches.size
         b.searchCount.text = when {
             q.isEmpty() -> ""
-            matches.isEmpty() -> getString(R.string.no_results)
-            matches.size >= SEARCH_LIMIT -> getString(R.string.search_count_more, matchIndex + 1, matches.size)
-            else -> getString(R.string.search_count, matchIndex + 1, matches.size)
+            total == 0 -> getString(R.string.no_results)
+            total >= SEARCH_LIMIT -> getString(R.string.search_count_more, matchIndex + 1, total)
+            else -> getString(R.string.search_count, matchIndex + 1, total)
         }
     }
 
@@ -512,6 +762,7 @@ class ViewerActivity : AppCompatActivity() {
         val (info, detail) = when (val s = shownState) {
             is ViewerState.Pdf -> s.info to "PDF · ${s.pdf.pageCount}쪽"
             is ViewerState.Text -> s.info to "${if (s.type == DocumentType.HWPX) "HWPX" else "HWP"} · 문단 ${s.doc.blocks.size}개"
+            is ViewerState.Rich -> s.info to "${if (s.type == DocumentType.HWPX) "HWPX" else "HWP"} · ${s.renderer.pageCount}쪽"
             is ViewerState.Failed -> (s.info ?: return) to "열 수 없음"
             else -> return
         }
@@ -531,7 +782,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        menu.findItem(R.id.action_copy_all)?.isVisible = shownState is ViewerState.Text
+        menu.findItem(R.id.action_copy_all)?.isVisible = shownState is ViewerState.Text || shownState is ViewerState.Rich
         menu.findItem(R.id.action_info)?.isVisible = shownState !is ViewerState.Loading
         return super.onPrepareOptionsMenu(menu)
     }
@@ -547,15 +798,21 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun copyAllText() {
-        val state = shownState as? ViewerState.Text ?: return
-        val sb = StringBuilder()
-        for (block in state.doc.blocks) {
-            if (sb.length + block.text.length > CLIPBOARD_LIMIT) break
-            sb.append(block.text).append('\n')
+        val (name, text) = when (val state = shownState) {
+            is ViewerState.Rich -> state.info.displayName to state.renderer.plainText(CLIPBOARD_LIMIT)
+            is ViewerState.Text -> {
+                val sb = StringBuilder()
+                for (block in state.doc.blocks) {
+                    if (sb.length + block.text.length > CLIPBOARD_LIMIT) break
+                    sb.append(block.text).append('\n')
+                }
+                state.info.displayName to sb.toString()
+            }
+            else -> return
         }
         try {
             getSystemService(ClipboardManager::class.java)
-                ?.setPrimaryClip(ClipData.newPlainText(state.info.displayName, sb))
+                ?.setPrimaryClip(ClipData.newPlainText(name, text))
             // Android 13+ 는 시스템이 복사 알림을 띄운다
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
@@ -570,12 +827,14 @@ class ViewerActivity : AppCompatActivity() {
         val info: DocumentInfo? = when (val s = shownState) {
             is ViewerState.Pdf -> s.info
             is ViewerState.Text -> s.info
+            is ViewerState.Rich -> s.info
             else -> null
         }
         val send = Intent(Intent.ACTION_SEND).apply {
             type = info?.mimeType?.takeIf { it != "application/octet-stream" } ?: when (shownState) {
                 is ViewerState.Pdf -> "application/pdf"
-                is ViewerState.Text -> "application/x-hwp"
+                is ViewerState.Text -> if ((shownState as ViewerState.Text).type == DocumentType.HWPX) "application/hwp+zip" else "application/x-hwp"
+                is ViewerState.Rich -> if ((shownState as ViewerState.Rich).type == DocumentType.HWPX) "application/hwp+zip" else "application/x-hwp"
                 else -> "*/*"
             }
             putExtra(Intent.EXTRA_STREAM, uri)

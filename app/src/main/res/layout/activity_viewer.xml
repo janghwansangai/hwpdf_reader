@@ -114,6 +114,13 @@
             app:fastScrollVerticalThumbDrawable="@drawable/fastscroll_thumb"
             app:fastScrollVerticalTrackDrawable="@drawable/fastscroll_track" />
 
+        <!-- 한글 문서 원본 보기/읽기 모드 (WebView 는 코드에서 넣는다) -->
+        <FrameLayout
+            android:id="@+id/richContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/loading"
             android:layout_width="wrap_content"
@@ -179,6 +186,13 @@
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSecond"
             style="@style/Widget.FastReader.BottomAction"
+            app:icon="@drawable/ic_text_size" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnText"
+            style="@style/Widget.FastReader.BottomAction"
+            android:text="@string/text_size"
+            android:visibility="gone"
             app:icon="@drawable/ic_text_size" />
 
         <com.google.android.material.button.MaterialButton
