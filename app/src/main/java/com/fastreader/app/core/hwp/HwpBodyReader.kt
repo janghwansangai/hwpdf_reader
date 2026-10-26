@@ -12,6 +12,8 @@ import com.fastreader.app.core.doc.FieldKind
 import com.fastreader.app.core.doc.HeaderFooter
 import com.fastreader.app.core.doc.Inline
 import com.fastreader.app.core.doc.LineSeg
+import com.fastreader.app.core.doc.MasterPage
+import com.fastreader.app.core.doc.MasterPageType
 import com.fastreader.app.core.doc.PageApply
 import com.fastreader.app.core.doc.PageDef
 import com.fastreader.app.core.doc.PageNumberPos
@@ -108,6 +110,8 @@ internal class HwpSectionReader(
     private var hideFirstHeader = false
     private var hideFirstFooter = false
     private var hideFirstPageNumber = false
+    private val masterPages = ArrayList<MasterPage>()
+    private var hideFirstMasterPage = false
 
     /** 지금 읽고 있는 최상위 문단 번호 */
     private var topIndex = 0
@@ -131,6 +135,8 @@ internal class HwpSectionReader(
         val paragraphs = ArrayList<Paragraph>()
         var i = 0
         while (i < t.size) {
+            // 본문 문단 뒤 최상위 LIST_HEADER 는 "마지막 쪽/임의 쪽" 바탕쪽: 본문으로 읽지 않는다
+            if (t.tag[i] == HwpTags.LIST_HEADER && t.level[i] == 0 && paragraphs.isNotEmpty()) break
             if (t.tag[i] == HwpTags.PARA_HEADER) {
                 topIndex = paragraphs.size
                 val p = try {
@@ -158,6 +164,8 @@ internal class HwpSectionReader(
             hideFirstFooter = hideFirstFooter,
             hideFirstPageNumber = hideFirstPageNumber,
             pageBorderFills = pageBorderFills,
+            masterPages = masterPages,
+            hideFirstMasterPage = hideFirstMasterPage,
         )
     }
 
@@ -442,6 +450,7 @@ internal class HwpSectionReader(
         hideFirstHeader = hideFirstHeader || prop and 0x01 != 0
         hideFirstFooter = hideFirstFooter || prop and 0x02 != 0
         hideFirstPageNumber = hideFirstPageNumber || prop and 0x20 != 0
+        hideFirstMasterPage = hideFirstMasterPage || prop and 0x04 != 0
         val pd = t.firstChild(k, HwpTags.PAGE_DEF)
         pageDef = if (pd >= 0) HwpControlReader.pageDef(t.reader(pd)) else PageDef()
         // 쪽 테두리/배경: 양쪽, 짝수쪽, 홀수쪽 순서
@@ -465,6 +474,27 @@ internal class HwpSectionReader(
                             includeFooter = bp and 4 != 0, fillArea = (bp ushr 3) and 3, offset = offset,
                         ),
                     )
+                }
+            }
+        }
+        // 바탕쪽: 속성 비트 29/30/31(양쪽/짝수/홀수) 중 켜진 것이 이 순서대로 LIST_HEADER + 문단 목록으로 들어 있다
+        val types = ArrayList<MasterPageType>(3)
+        if (prop and (1 shl 29) != 0) types.add(MasterPageType.BOTH)
+        if (prop and (1 shl 30) != 0) types.add(MasterPageType.EVEN)
+        if (prop and (1 shl 31) != 0) types.add(MasterPageType.ODD)
+        var m = 0
+        t.forChildren(k) { c ->
+            if (t.tag[c] == HwpTags.LIST_HEADER && m < 3) {
+                val lr = t.reader(c)
+                lr.s32() // 문단 수
+                lr.s32() // 속성
+                val w = lr.s32()
+                val h = lr.s32()
+                val type = types.getOrNull(m) ?: if (types.isEmpty() && m == 0) MasterPageType.BOTH else null
+                m++
+                if (type != null) {
+                    val paras = paragraphList(c, t.end[k], 1).first
+                    if (paras.isNotEmpty()) masterPages.add(MasterPage(type, paras, w.coerceAtLeast(0), h.coerceAtLeast(0)))
                 }
             }
         }

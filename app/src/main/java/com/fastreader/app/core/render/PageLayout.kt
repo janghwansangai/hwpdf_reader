@@ -3,6 +3,8 @@ package com.fastreader.app.core.render
 import com.fastreader.app.core.doc.BreakType
 import com.fastreader.app.core.doc.DrawObject
 import com.fastreader.app.core.doc.HeaderFooter
+import com.fastreader.app.core.doc.MasterPage
+import com.fastreader.app.core.doc.MasterPageType
 import com.fastreader.app.core.doc.Inline
 import com.fastreader.app.core.doc.PageApply
 import com.fastreader.app.core.doc.PageDef
@@ -65,6 +67,8 @@ internal class PageLayout(private val doc: RichDocument, private val index: DocI
         val notes = ArrayList<Inline.Note>()
         var header: HeaderFooter? = null
         var footer: HeaderFooter? = null
+        /** 이 쪽의 바탕쪽 (겹쳐 그리기면 둘) */
+        var masters: List<MasterPage> = emptyList()
         var showPageNumber = true
         /** 미주 구분선 위치 (본문 기준, 없으면 -1) */
         var endnoteRuleY = -1
@@ -450,11 +454,28 @@ internal class PageLayout(private val doc: RichDocument, private val index: DocI
             lastTop = maxOf(lastTop, pg.lastTop)
             pg.header = pick(sortedHeaders, lastTop, pg.number)
             pg.footer = pick(sortedFooters, lastTop, pg.number)
+            val last = i + 1 >= pages.size || pages[i + 1].section != si
+            pg.masters = if (i == first && s.hideFirstMasterPage) emptyList() else pickMasters(s.masterPages, pg, last)
             if (i == first) {
                 if (s.hideFirstHeader) pg.header = null
                 if (s.hideFirstFooter) pg.footer = null
             }
             i++
+        }
+    }
+
+    /** 바탕쪽: 홀/짝 쪽 전용이 있으면 그것, 없으면 양쪽. 마지막 쪽/임의 쪽 바탕쪽은 기본 바탕쪽을 대신하거나 겹쳐 그린다 */
+    private fun pickMasters(list: List<MasterPage>, pg: Page, last: Boolean): List<MasterPage> {
+        if (list.isEmpty()) return emptyList()
+        val odd = pg.number % 2 != 0
+        val base = list.firstOrNull { it.type == (if (odd) MasterPageType.ODD else MasterPageType.EVEN) }
+            ?: list.firstOrNull { it.type == MasterPageType.BOTH }
+        val special = (if (last) list.firstOrNull { it.type == MasterPageType.LAST } else null)
+            ?: list.firstOrNull { it.type == MasterPageType.OPTIONAL && it.pageNumber == pg.pageInSection + 1 }
+        return when {
+            special == null -> listOfNotNull(base)
+            special.duplicate -> listOfNotNull(base, special)
+            else -> listOf(special)
         }
     }
 

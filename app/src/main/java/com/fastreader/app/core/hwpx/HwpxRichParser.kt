@@ -8,6 +8,7 @@ import com.fastreader.app.core.doc.CharShape
 import com.fastreader.app.core.doc.ImageInfo
 import com.fastreader.app.core.doc.ImageSink
 import com.fastreader.app.core.doc.Inline
+import com.fastreader.app.core.doc.MasterPage
 import com.fastreader.app.core.doc.PageDef
 import com.fastreader.app.core.doc.Paragraph
 import com.fastreader.app.core.doc.RichDocument
@@ -59,7 +60,7 @@ object HwpxRichParser {
     private const val MAX_IMAGE_TOTAL = 1024L * 1024 * 1024
     private const val MAX_PREVIEW = 4 * 1024 * 1024
 
-    private class ParsedSection(val path: String, val order: Int, val section: Section)
+    private class ParsedSection(val path: String, val order: Int, val section: Section, val masterPageRefs: List<String> = emptyList())
 
     private class Parser(private val sink: ImageSink?) {
         private val ctx = HwpxParseContext()
@@ -67,6 +68,7 @@ object HwpxRichParser {
         private var manifest: HwpxManifest? = null
         private val encryption = HwpxEncryptionInfo()
         private val sections = ArrayList<ParsedSection>()
+        private val masterPages = HashMap<String, MasterPage>()
         private var failedSections = 0
         private var preview: String? = null
         private val images = LinkedHashMap<String, ImageInfo>()
@@ -153,7 +155,6 @@ object HwpxRichParser {
         private fun parseContentXml(name: String, zis: ZipInputStream) {
             val isHeader = name.endsWith("header.xml")
             if (!isHeader && tooLarge) return
-            if (!isHeader && name.substringAfterLast('/').startsWith("masterpage")) return
             if (xmlBytes > MAX_XML_TOTAL) {
                 tooLarge = true
                 return
@@ -170,6 +171,10 @@ object HwpxRichParser {
                     "sec" -> {
                         kind = 2
                         sectionReader.root.child(name, a)
+                    }
+                    "masterPage" -> {
+                        kind = 3
+                        sectionReader.masterPageRoot { id, mp -> if (masterPages.size < 64) masterPages.putIfAbsent(id, mp) }.child(name, a)
                     }
                     else -> throw StopParsingException()
                 }
@@ -203,7 +208,7 @@ object HwpxRichParser {
                 }
                 2 -> {
                     if (failed) partial = true
-                    sections.add(ParsedSection(name, sections.size, sectionReader.build()))
+                    sections.add(ParsedSection(name, sections.size, sectionReader.build(), sectionReader.masterPageRefs.toList()))
                 }
                 else -> if (failed && SECTION_NUM.containsMatchIn(name)) failedSections++
             }
@@ -307,7 +312,13 @@ object HwpxRichParser {
                 numberings = h.numberings,
                 bullets = h.bullets,
                 styles = h.styles,
-                sections = withBeginNumber(ordered.map { it.section }, h.startPage),
+                sections = withBeginNumber(
+                    ordered.map { ps ->
+                        val mps = ps.masterPageRefs.mapNotNull { masterPages[it] }
+                        if (mps.isEmpty()) ps.section else ps.section.copy(masterPages = mps)
+                    },
+                    h.startPage,
+                ),
                 images = imageMap,
                 notice = notice,
             )
@@ -317,14 +328,7 @@ object HwpxRichParser {
         private fun withBeginNumber(list: List<Section>, begin: Int): List<Section> {
             val first = list.firstOrNull() ?: return list
             if (begin <= 1 || begin > 1_000_000 || first.startPageNumber != 0) return list
-            val s = Section(
-                page = first.page, columns = first.columns, paragraphs = first.paragraphs,
-                headers = first.headers, footers = first.footers, pageNumbering = first.pageNumbering,
-                startPageNumber = begin, outlineNumberingId = first.outlineNumberingId,
-                hideFirstHeader = first.hideFirstHeader, hideFirstFooter = first.hideFirstFooter,
-                hideFirstPageNumber = first.hideFirstPageNumber,
-            )
-            return listOf(s) + list.drop(1)
+            return listOf(first.copy(startPageNumber = begin)) + list.drop(1)
         }
 
         /** 본문을 못 읽었을 때 Preview/PrvText.txt 로 만든 문서 */

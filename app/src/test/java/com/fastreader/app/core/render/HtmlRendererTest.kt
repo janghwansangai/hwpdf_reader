@@ -4,6 +4,8 @@ import com.fastreader.app.core.ByteArraySource
 import com.fastreader.app.core.doc.CharShape
 import com.fastreader.app.core.doc.Inline
 import com.fastreader.app.core.doc.LineSeg
+import com.fastreader.app.core.doc.MasterPage
+import com.fastreader.app.core.doc.MasterPageType
 import com.fastreader.app.core.doc.PageDef
 import com.fastreader.app.core.doc.Paragraph
 import com.fastreader.app.core.doc.ParaShape
@@ -128,6 +130,24 @@ class HtmlRendererTest {
         assertFalse(Regex("(?<!dkb )\\.c0\\{[^}]*color:#ffffff").containsMatchIn(flow))
         // 원본 보기는 원래 색 그대로
         assertTrue(Regex("\\.c0\\{[^}]*color:#ffffff").containsMatchIn(r.shellHtml(ViewMode.PAGE)))
+    }
+
+    @Test
+    fun masterPageIsDrawnOnEveryPage() {
+        val base = doc("본문")
+        val mp = base.sections[0].paragraphs[0].let { p ->
+            Paragraph(0, content = listOf(Inline.Text(0, "바탕쪽글자", 0)), lines = p.lines)
+        }
+        val d = RichDocument(
+            charShapes = base.charShapes, paraShapes = base.paraShapes, borderFills = emptyMap(),
+            numberings = emptyMap(), bullets = emptyMap(), styles = emptyMap(),
+            sections = listOf(base.sections[0].copy(masterPages = listOf(MasterPage(MasterPageType.BOTH, listOf(mp))))),
+            images = emptyMap(),
+        )
+        val page = HtmlRenderer(d).pageHtml(0)
+        assertTrue(page.contains("바탕쪽글자") && page.indexOf("바탕쪽글자") < page.indexOf("본문"))
+        // 바탕쪽 글자는 검색 대상(본문)이 아니다
+        assertTrue(HtmlRenderer(d).search("바탕쪽").isEmpty())
     }
 
     @Test

@@ -286,6 +286,37 @@ class Section(
     val hideFirstPageNumber: Boolean = false,
     /** 쪽 테두리/배경 (양쪽/짝수/홀수) */
     val pageBorderFills: List<PageBorderFill> = emptyList(),
+    /** 바탕쪽 */
+    val masterPages: List<MasterPage> = emptyList(),
+    /** 첫 쪽에 바탕쪽 감추기 */
+    val hideFirstMasterPage: Boolean = false,
+) {
+    fun copy(
+        startPageNumber: Int = this.startPageNumber,
+        masterPages: List<MasterPage> = this.masterPages,
+    ) = Section(
+        page, columns, paragraphs, headers, footers, pageNumbering, startPageNumber, outlineNumberingId,
+        hideFirstHeader, hideFirstFooter, hideFirstPageNumber, pageBorderFills, masterPages, hideFirstMasterPage,
+    )
+}
+
+enum class MasterPageType { BOTH, EVEN, ODD, LAST, OPTIONAL }
+
+/**
+ * 바탕쪽: 쪽마다 본문 뒤에 그리는 내용 (테두리 틀, 로고, 쪽 장식 등).
+ * 문단 좌표의 원점은 본문 영역 왼쪽 위. 떠 있는 개체는 자기 기준(종이/쪽/문단)대로 놓는다.
+ */
+class MasterPage(
+    val type: MasterPageType,
+    val paragraphs: List<Paragraph>,
+    val width: Int = 0,
+    val height: Int = 0,
+    /** OPTIONAL: 적용할 쪽 번호 */
+    val pageNumber: Int = 0,
+    /** LAST/OPTIONAL: 기본 바탕쪽과 겹쳐 그린다 */
+    val duplicate: Boolean = false,
+    /** 본문 앞에 그린다 */
+    val front: Boolean = false,
 )
 
 // ---------------------------------------------------------------- 문단

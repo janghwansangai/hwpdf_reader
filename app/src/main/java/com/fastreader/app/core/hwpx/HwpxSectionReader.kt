@@ -11,6 +11,8 @@ import com.fastreader.app.core.doc.DrawObject
 import com.fastreader.app.core.doc.Equation
 import com.fastreader.app.core.doc.FieldKind
 import com.fastreader.app.core.doc.HeaderFooter
+import com.fastreader.app.core.doc.MasterPage
+import com.fastreader.app.core.doc.MasterPageType
 import com.fastreader.app.core.doc.HorzRel
 import com.fastreader.app.core.doc.Inline
 import com.fastreader.app.core.doc.Insets
@@ -217,6 +219,10 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
     private var hideFirstPageNumber = false
     private val pageBorderFills = ArrayList<PageBorderFill>()
     private var secPrSeen = false
+    private var hideFirstMasterPage = false
+
+    /** 이 구역이 쓰는 바탕쪽 ID (Contents/masterpageN.xml 의 id). 문서를 다 읽은 뒤 실제 바탕쪽으로 바꾼다 */
+    val masterPageRefs = ArrayList<String>()
 
     /** 구역 첫 쪽 추적 (최상위 문단의 줄 배치로) */
     private var firstPageEnded = false
@@ -278,7 +284,44 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         hideFirstFooter = hideFirstFooter,
         hideFirstPageNumber = hideFirstPageNumber,
         pageBorderFills = pageBorderFills,
+        hideFirstMasterPage = hideFirstMasterPage,
     )
+
+    /** Contents/masterpageN.xml 의 루트 요소 처리기. 다 읽으면 (id, 바탕쪽) 을 넘긴다 */
+    fun masterPageRoot(done: (String, MasterPage) -> Unit): XNode = object : XNode() {
+        override fun child(name: String, a: XAttrs): XNode? {
+            if (name != "masterPage") throw StopParsingException()
+            return MasterPageNode(a, done)
+        }
+    }
+
+    private inner class MasterPageNode(a: XAttrs, private val done: (String, MasterPage) -> Unit) : XNode() {
+        private val id = a.str("id").trim()
+        private val type = when (a.str("type").trim().uppercase()) {
+            "EVEN" -> MasterPageType.EVEN
+            "ODD" -> MasterPageType.ODD
+            "LAST_PAGE" -> MasterPageType.LAST
+            "OPTIONAL_PAGE" -> MasterPageType.OPTIONAL
+            else -> MasterPageType.BOTH
+        }
+        private val pageNumber = a.int("pageNumber").coerceIn(0, 1_000_000)
+        private val duplicate = a.bool("pageDuplicate")
+        private val front = a.bool("pageFront")
+        private val paras = ArrayList<Paragraph>()
+        private var w = 0
+        private var h = 0
+
+        override fun child(name: String, a: XAttrs): XNode? {
+            if (name != "subList") return null
+            w = a.len("textWidth").coerceAtLeast(0)
+            h = a.len("textHeight").coerceAtLeast(0)
+            return SubListNode(paras)
+        }
+
+        override fun end() {
+            if (id.isNotEmpty()) done(id, MasterPage(type, paras, w, h, pageNumber, duplicate, front))
+        }
+    }
 
     /** 지금 읽는 최상위 문단 번호 */
     private val topIndex get() = paragraphs.size
@@ -439,7 +482,9 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                     hideFirstHeader = a.bool("hideFirstHeader")
                     hideFirstFooter = a.bool("hideFirstFooter")
                     hideFirstPageNumber = a.bool("hideFirstPageNum")
+                    hideFirstMasterPage = a.bool("hideFirstMasterPage")
                 }
+                "masterPage" -> a.str("idRef").trim().takeIf { it.isNotEmpty() && masterPageRefs.size < 16 }?.let(masterPageRefs::add)
                 "pageBorderFill" -> {
                     val id = a.int("borderFillIDRef")
                     if (id <= 0 || pageBorderFills.size >= 3) return null

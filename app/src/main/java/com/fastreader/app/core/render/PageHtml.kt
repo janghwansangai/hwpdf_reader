@@ -48,6 +48,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
     fun render(): String {
         val sb = StringBuilder(16 * 1024)
         pageBorderFill(sb)
+        for (mp in pg.masters) if (!mp.front) masterPage(sb, mp)
         val bodyL = def.bodyLeft
         val bodyT = def.bodyTop
         // 본문
@@ -75,7 +76,16 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         pg.header?.let { headerFooter(sb, it, true) }
         pg.footer?.let { headerFooter(sb, it, false) }
         if (pg.showPageNumber) pageNumber(sb)
+        for (mp in pg.masters) if (mp.front) masterPage(sb, mp)
         return sb.toString()
+    }
+
+    // ------------------------------------------------------------------ 바탕쪽
+
+    /** 바탕쪽: 문단은 본문 영역 기준, 떠 있는 개체는 자기 기준(종이/쪽/문단)대로 쪽 좌표에 */
+    private fun masterPage(sb: StringBuilder, mp: com.fastreader.app.core.doc.MasterPage) {
+        val w = if (mp.width > 0) minOf(mp.width, def.width) else def.bodyWidth
+        area(sb, mp.paragraphs, def.bodyLeft, def.bodyTop, w, 1, pageSpace = true)
     }
 
     // ------------------------------------------------------------------ 쪽 테두리/배경
@@ -195,7 +205,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
     // ------------------------------------------------------------------ 영역 (셀/글상자/머리말/각주)
 
     /** 문단 목록을 (ox, oy) 영역 안에 쓴다. 줄 없는 문단은 흐름 상자로 */
-    private fun area(sb: StringBuilder, paras: List<Paragraph>, ox: Int, oy: Int, areaW: Int, depth: Int, note: Boolean = false) {
+    private fun area(sb: StringBuilder, paras: List<Paragraph>, ox: Int, oy: Int, areaW: Int, depth: Int, note: Boolean = false, pageSpace: Boolean = false) {
         if (depth > DocIndex.MAX_DEPTH) return
         var cursor = 0
         var i = 0
@@ -213,7 +223,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
                 flowBlock(sb, group, ox, oy + cursor, areaW, depth + 1)
                 // 줄 정보 없는 문단의 떠 있는 개체 (흐름 상자 위쪽 기준으로 근사)
                 for (gp in group) for (inl in gp.content) {
-                    if (inl is Inline.Object && !inl.obj.layout.treatAsChar) areaObject(sb, inl, gp, ox, oy + cursor, areaW, depth + 1)
+                    if (inl is Inline.Object && !inl.obj.layout.treatAsChar) areaObject(sb, inl, gp, ox, oy + cursor, areaW, depth + 1, pageSpace)
                 }
                 cursor += ctx.geom.paragraphsHeight(group, areaW, depth + 1)
                 continue
@@ -224,7 +234,7 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
             // 이 문단의 떠 있는 개체 (영역 기준)
             for (inl in p.content) {
                 if (inl is Inline.Object && !inl.obj.layout.treatAsChar) {
-                    areaObject(sb, inl, p, ox, oy, areaW, depth + 1)
+                    areaObject(sb, inl, p, ox, oy, areaW, depth + 1, pageSpace)
                 }
             }
             i++
@@ -232,11 +242,19 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
     }
 
     /** 셀/글상자 안에서 떠 있는 개체: 문단 기준이면 그 문단 위, 아니면 영역 왼쪽 위 기준으로 근사 */
-    private fun areaObject(sb: StringBuilder, inl: Inline.Object, p: Paragraph, ox: Int, oy: Int, areaW: Int, depth: Int) {
+    private fun areaObject(sb: StringBuilder, inl: Inline.Object, p: Paragraph, ox: Int, oy: Int, areaW: Int, depth: Int, pageSpace: Boolean = false) {
         val o = inl.obj
         val l = o.layout
         val (w, h) = objSize(o)
         val paraTop = p.lines.firstOrNull()?.vertPos ?: 0
+        if (pageSpace) {
+            // 바탕쪽: 본문 개체와 같은 기준으로 놓고, 겹침 순서는 문서 순서(본문보다 뒤)
+            val ps = doc.paraShapes[p.paraShapeId] ?: ParaShape.DEFAULT
+            val x = pageX(l, w, def.bodyLeft, def.bodyWidth, ps)
+            val y = pageY(l, h, oy + paraTop)
+            objectAt(sb, o, x, y, w, h, depth, 2)
+            return
+        }
         val x = ox + alignX(l.horzAlign, 0, areaW, w, l.horzOffset) + (if (l.horzAlign == ObjAlign.START) l.outMargin.left else 0)
         val y = oy + (if (l.vertRelTo == VertRel.PARA) paraTop + l.vertOffset + l.outMargin.top else l.vertOffset)
         objectAt(sb, o, x, y, w, h, depth, zIndex(l, inArea = true))
@@ -251,8 +269,25 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         val ps = doc.paraShapes[place.para.paraShapeId] ?: ParaShape.DEFAULT
         val colL = def.bodyLeft + layout.columnLeft(section, place.col)
         val colW = layout.columnWidth(section, place.col)
-        val oddPage = pg.number % 2 != 0
+        val x = pageX(l, w, colL, colW, ps)
 
+        if (place.continuation) {
+            // 쪽을 넘어 이어지는 표 조각: 본문 위에서부터
+            val y = def.bodyTop + l.outMargin.top
+            tableFragment(sb, o as Table, x, y, w, place)
+            return
+        }
+        val y = pageY(l, h, def.bodyTop + place.paraTop)
+        if (o is Table && place.fragEnd >= 0) {
+            tableFragment(sb, o, x, y, w, place)
+            return
+        }
+        objectAt(sb, o, x, y, w, h, 0, zIndex(l))
+    }
+
+    /** 떠 있는 개체의 쪽 좌표 x. colL/colW: 개체가 속한 단 (쪽 좌표) */
+    private fun pageX(l: com.fastreader.app.core.doc.ObjectLayout, w: Int, colL: Int, colW: Int, ps: ParaShape): Int {
+        val oddPage = pg.number % 2 != 0
         // 가로 기준 영역
         val (bx, bw) = when (l.horzRelTo) {
             HorzRel.PAPER -> 0 to def.width
@@ -267,23 +302,14 @@ internal class PageRenderer(private val ctx: Ctx, private val layout: PageLayout
         if (l.horzRelTo == HorzRel.PARA || l.horzRelTo == HorzRel.COLUMN) {
             if (halign == ObjAlign.START) x += l.outMargin.left else if (halign == ObjAlign.END) x -= l.outMargin.right
         }
+        return x
+    }
 
-        if (place.continuation) {
-            // 쪽을 넘어 이어지는 표 조각: 본문 위에서부터
-            val y = def.bodyTop + l.outMargin.top
-            tableFragment(sb, o as Table, x, y, w, place)
-            return
-        }
-        val y = when (l.vertRelTo) {
-            VertRel.PAPER -> alignY(l.vertAlign, 0, def.height, h, l.vertOffset)
-            VertRel.PAGE -> def.bodyTop + alignY(l.vertAlign, 0, def.bodyHeight, h, l.vertOffset)
-            VertRel.PARA -> def.bodyTop + place.paraTop + l.vertOffset + l.outMargin.top
-        }
-        if (o is Table && place.fragEnd >= 0) {
-            tableFragment(sb, o, x, y, w, place)
-            return
-        }
-        objectAt(sb, o, x, y, w, h, 0, zIndex(l))
+    /** 떠 있는 개체의 쪽 좌표 y. paraTop: 기준 문단 위쪽 (쪽 좌표) */
+    private fun pageY(l: com.fastreader.app.core.doc.ObjectLayout, h: Int, paraTop: Int): Int = when (l.vertRelTo) {
+        VertRel.PAPER -> alignY(l.vertAlign, 0, def.height, h, l.vertOffset)
+        VertRel.PAGE -> def.bodyTop + alignY(l.vertAlign, 0, def.bodyHeight, h, l.vertOffset)
+        VertRel.PARA -> paraTop + l.vertOffset + l.outMargin.top
     }
 
     /**
