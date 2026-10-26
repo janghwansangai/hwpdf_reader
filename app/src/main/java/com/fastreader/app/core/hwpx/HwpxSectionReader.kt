@@ -245,7 +245,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         if (!firstPageEnded) {
             for (c in pendingPageCtrls) {
                 if (c.pos >= breakPos) continue
-                if (c.newNum > 0 && newNumPage == 0) newNumPage = c.newNum
+                if (c.newNum > 0) newNumPage = c.newNum
                 if (c.hideHeader) hideFirstHeader = true
                 if (c.hideFooter) hideFirstFooter = true
                 if (c.hidePageNum) hideFirstPageNumber = true
@@ -255,19 +255,12 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         if (breakPos != Int.MAX_VALUE) firstPageEnded = true
     }
 
-    /** 루트가 hs:sec 이었는가 */
-    var isSection = false
-        private set
-
     val root: XNode = object : XNode() {
         override fun child(name: String, a: XAttrs): XNode? {
             if (name != "sec") throw StopParsingException()
-            isSection = true
             return SecNode()
         }
     }
-
-    val paragraphCount get() = paragraphs.size
 
     fun build(): Section = Section(
         page = page ?: PageDef(),
@@ -276,7 +269,8 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         headers = headers,
         footers = footers,
         pageNumbering = pageNumbering,
-        startPageNumber = if (startPage > 0) startPage else newNumPage,
+        // 첫 쪽의 새 번호 지정이 구역 시작 번호보다 나중에 적용된다 (HWP 파서와 같음)
+        startPageNumber = if (newNumPage > 0) newNumPage else startPage,
         outlineNumberingId = outlineNumberingId,
         hideFirstHeader = hideFirstHeader,
         hideFirstFooter = hideFirstFooter,
@@ -393,22 +387,14 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
     }
 
-    /** 글자 겹침: 겹친 글자를 8칸 자리의 처음에 글자로 넣는다. 글자 모양은 첫 글자의 것(hp:charPr) */
+    /**
+     * 글자 겹침: 겹친 글자를 8칸 자리의 처음에 글자로 넣는다.
+     * 글자 모양은 HWP 파서와 같이 그 자리(run)의 것을 쓴다 (안쪽 글자 모양 hp:charPr 는 크기 축소용이라 원문자로 바꾸면 맞지 않는다)
+     */
     private inner class ComposeNode(private val pb: ParaBuilder, private val start: Int, private val charPr: Int, a: XAttrs) : XNode() {
         private val text = composeDisplay(a.str("circleType"), a.str("composeText"))
-        private var shape = -1
-        private var seen = false
 
-        override fun child(name: String, a: XAttrs): XNode? {
-            if (name == "charPr" && !seen) {
-                seen = true
-                val id = a.int("prIDRef", -1)
-                if (id >= 0 && id != 0xFFFF) shape = id
-            }
-            return null
-        }
-
-        override fun end() = pb.addTextAt(start, if (shape >= 0) shape else charPr, text)
+        override fun end() = pb.addTextAt(start, charPr, text)
     }
 
     private inner class TNode(private val pb: ParaBuilder, private val charPr: Int) : XNode() {
@@ -426,7 +412,6 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
                 "fwSpace" -> pb.char(charPr, ' ')
                 "hyphen", "hypen" -> pb.char(charPr, '-')
                 "titleMark" -> pb.reserve()
-                "unknownch" -> pb.reserve(1)
                 "markpenBegin" -> pb.markpen = HwpxValues.color(a["color"]) ?: 0xFFFF00
                 "markpenEnd" -> pb.markpen = -1
                 // insertBegin/End, deleteBegin/End 등 변경 추적 표시는 자리를 차지하지 않는다
@@ -647,10 +632,18 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
         }
 
         override fun end() {
+            if (sameSz || widths.isEmpty()) {
+                columns = ColumnDef(count = count, gap = gap, separator = separator)
+                return
+            }
+            // 너비가 다른 단: colSz 의 너비/간격은 합이 32768 인 비율 값이다 (샘플의 단별 줄 폭 = 값/32768 × 본문 폭 으로 확인)
+            val total = widths.sumOf { it.toLong() } + gaps.sumOf { it.toLong() }
+            val body = (page ?: PageDef()).bodyWidth.coerceAtLeast(0)
+            fun scale(v: Int) = if (total <= 0) v else ((v.toLong() * body + total / 2) / total).toInt()
             columns = ColumnDef(
                 count = count,
-                gap = if (sameSz || gaps.isEmpty()) gap else gaps.first(),
-                widths = if (sameSz) emptyList() else widths.toList(),
+                gap = scale(gaps.first()),
+                widths = widths.map { scale(it) },
                 separator = separator,
             )
         }
@@ -940,8 +933,8 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             while (i + 1 < raw.size) {
                 val px = raw[i].toDouble()
                 val py = raw[i + 1].toDouble()
-                out.add(XAttrs.clampLen(Math.round((m.x(px, py) - b[0]) * sx).toInt()))
-                out.add(XAttrs.clampLen(Math.round((m.y(px, py) - b[1]) * sy).toInt()))
+                out.add(XAttrs.clampD((m.x(px, py) - b[0]) * sx))
+                out.add(XAttrs.clampD((m.y(px, py) - b[1]) * sy))
                 i += 2
             }
             return out
@@ -960,13 +953,13 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
             val hRel = !absoluteSize && szHRel != "ABSOLUTE" && szH in 0..10_000
             val box = if (matrices.isNotEmpty() && (wRel || hRel)) bbox() else null
             val w = when {
-                wRel -> box?.get(2)?.let { Math.round(it).toInt() } ?: percentOf(szW, refWidth(szWRel))
+                wRel -> box?.get(2)?.let { XAttrs.clampD(it) } ?: percentOf(szW, refWidth(szWRel))
                 szW > 0 -> szW
                 curW > 0 -> curW
                 else -> orgW
             }
             val h = when {
-                hRel -> box?.get(3)?.let { Math.round(it).toInt() } ?: percentOf(szH, refHeight(szHRel))
+                hRel -> box?.get(3)?.let { XAttrs.clampD(it) } ?: percentOf(szH, refHeight(szHRel))
                 szH > 0 -> szH
                 curH > 0 -> curH
                 else -> orgH
@@ -981,7 +974,7 @@ internal class HwpxSectionReader(private val ctx: HwpxParseContext) {
 
         protected fun layout(): ObjectLayout {
             val box = layoutBox()
-            fun i(v: Double) = XAttrs.clampLen(Math.round(v).toInt())
+            fun i(v: Double) = XAttrs.clampD(v)
             return if (inContainer) {
                 ObjectLayout(
                     treatAsChar = false,

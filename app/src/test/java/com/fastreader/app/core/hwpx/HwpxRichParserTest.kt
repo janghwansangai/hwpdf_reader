@@ -637,8 +637,8 @@ class HwpxRichParserTest {
         val c = parse(zip("Contents/section0.xml" to sec)).sections[0].paragraphs[0].content
         assertEquals("http://www.daum.net", (c[0] as Inline.FieldStart).url)
         assertEquals("http://a.com/b?c=1", (c[2] as Inline.FieldStart).url)
-        // 글자 겹침: 첫 글자의 글자 모양
-        assertEquals(Inline.Text(24, "AO", 7), c[3])
+        // 글자 겹침: 그 자리(run)의 글자 모양 (HWP 파서와 같음)
+        assertEquals(Inline.Text(24, "AO", 2), c[3])
         val video = (c[4] as Inline.Object).obj as Picture
         assertEquals(32, c[4].start)
         assertEquals("image2", video.imageId)

@@ -102,6 +102,9 @@ internal class XAttrs {
 
         fun clampLen(v: Int) = v.coerceIn(-MAX_LEN, MAX_LEN)
 
+        /** 실수 길이 → 반올림한 HWPUNIT (범위 밖/NaN 은 잘라낸다) */
+        fun clampD(v: Double): Int = if (v.isNaN()) 0 else Math.round(v.coerceIn(-MAX_LEN.toDouble(), MAX_LEN.toDouble())).toInt()
+
         /** 정수(또는 실수를 반올림한 값). 해석할 수 없으면 null */
         fun parseLong(s: String): Long? {
             s.trim().let { t ->
