@@ -3,12 +3,20 @@ name: Build Fast Document Reader APK
 on:
   push:
     branches: ['**']
-    tags: ['v*']
   pull_request:
+  # 웹에서 릴리스를 Publish 하면 (태그 이름과 상관없이) APK 를 만들어 붙인다
+  release:
+    types: [published]
+  # 이미 만든 릴리스에 APK 를 다시 붙일 때: Actions → Run workflow → 릴리스 태그 입력
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'APK 를 붙일 릴리스의 태그 이름 (비우면 빌드만)'
+        required: false
+        default: ''
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,8 +30,19 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: 0. Decide release tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.release_tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          TAG="${EVENT_TAG:-$INPUT_TAG}"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          [ -n "$TAG" ] && echo "릴리스 $TAG 에 APK 를 붙입니다." || echo "빌드만 합니다."
+
       - name: 1. Checkout Repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.release_tag || github.ref }}
 
       - name: 2. Set up Java 17 (JDK)
         uses: actions/setup-java@v5
@@ -45,7 +64,7 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "SIGNING_STORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "고정 키로 서명합니다."
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          elif [ -n "$RELEASE_TAG" ]; then
             echo "::error::Release 빌드에는 SIGNING_KEYSTORE_BASE64 Secret 이 필요합니다."
             exit 1
           else
@@ -58,7 +77,7 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
           APP_VERSION_CODE: ${{ github.run_number }}
-          APP_VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          APP_VERSION_NAME: ${{ env.RELEASE_TAG }}
         run: ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
 
       - name: 7. Check release signature
@@ -77,11 +96,11 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: 9. Publish GitHub Release (v* 태그일 때만)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 9. Attach APK to GitHub Release (릴리스일 때만)
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           cp app/build/outputs/apk/release/app-release.apk "FastDocReader-${TAG}.apk"
           if gh release view "$TAG" >/dev/null 2>&1; then

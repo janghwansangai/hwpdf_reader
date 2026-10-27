@@ -13,7 +13,8 @@ android {
         targetSdk = 35
         // CI 는 실행 번호/태그로 버전을 정한다 (덮어 설치하려면 versionCode 가 계속 커져야 한다)
         versionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull()?.takeIf { it > 2 } ?: 2
-        versionName = System.getenv("APP_VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "1.1.0"
+        // 태그 이름에서 버전 숫자만 (예: v1.3, hwp_pdf_reader_v1.3 → 1.3)
+        versionName = System.getenv("APP_VERSION_NAME")?.let { Regex("\\d+(\\.\\d+)*").findAll(it).lastOrNull()?.value } ?: "1.1.0"
     }
 
     // 고정 서명 키: CI 가 Secrets 로 만든 키 파일 경로와 비밀번호를 환경 변수로 넘긴다
