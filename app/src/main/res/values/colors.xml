@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#1E5EFF</color>
+    <color name="ic_launcher_background">#1E5EFF</color>
+    <color name="badge_hwpx">#FF12A07A</color>
+    <color name="pdf_background">#FFD9DCE1</color>
+    <color name="table_row_background">#14808080</color>
+    <color name="search_highlight">#80FFD54F</color>
+    <color name="search_current">#FFFF9800</color>
+    <color name="badge_pdf">#FFE5483D</color>
+    <color name="badge_hwp">#FF1E7BE0</color>
+    <color name="notice_background">#FFFFF3CD</color>
+    <color name="notice_text">#FF664D03</color>
+</resources>
