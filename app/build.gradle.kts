@@ -11,8 +11,22 @@ android {
         applicationId = "com.fastreader.app"
         minSdk = 26 // Android 8.0 Oreo
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        // CI 는 실행 번호/태그로 버전을 정한다 (덮어 설치하려면 versionCode 가 계속 커져야 한다)
+        versionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull()?.takeIf { it > 2 } ?: 2
+        versionName = System.getenv("APP_VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "1.1.0"
+    }
+
+    // 고정 서명 키: CI 가 Secrets 로 만든 키 파일 경로와 비밀번호를 환경 변수로 넘긴다
+    val releaseStore = System.getenv("SIGNING_STORE_FILE")?.let { file(it) }?.takeIf { it.isFile }
+    signingConfigs {
+        if (releaseStore != null) {
+            create("release") {
+                storeFile = releaseStore
+                storePassword = System.getenv("SIGNING_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -20,8 +34,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // 별도 서명 설정이 없으면 디버그 키로 서명해 설치 가능한 APK를 만든다.
-            signingConfig = signingConfigs.getByName("debug")
+            // 고정 키가 없으면(로컬 빌드, 포크 등) 디버그 키로 서명해 설치 가능한 APK를 만든다.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
